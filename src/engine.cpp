@@ -90,13 +90,13 @@ Engine::Engine(std::optional<std::string> path) :
 
     
     options.add(  //
-      "Wait ms", Option(0, 0, 100, [this](const Option& o) { 
+      "Wait ms", Option(0, 0, 100, [](const Option& o) { 
           Eval::NNUE::WaitMs = o; 
           return std::nullopt; 
       }));
       
     options.add(  //
-      "Random Eval", Option(0, 0, 100, [this](const Option& o) { 
+      "Random Eval", Option(0, 0, 100, [](const Option& o) { 
           Eval::NNUE::RandomEval = o; 
           return std::nullopt; 
       )));
