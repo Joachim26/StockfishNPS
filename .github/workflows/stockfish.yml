@@ -4,12 +4,10 @@ on:
     tags:
       - "*"
     branches:
-      - master
       - tools
       - github_ci
   pull_request:
     branches:
-      - master
       - tools
 jobs:
   Prerelease:
