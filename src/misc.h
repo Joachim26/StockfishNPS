@@ -73,6 +73,7 @@ void dbg_stdev_of(int64_t value, int slot = 0);
 void dbg_extremes_of(int64_t value, int slot = 0);
 void dbg_correl_of(int64_t value1, int64_t value2, int slot = 0);
 void dbg_print();
+void dbg_clear();
 
 using TimePoint = std::chrono::milliseconds::rep;  // A value in milliseconds
 static_assert(sizeof(TimePoint) == sizeof(int64_t), "TimePoint should be 64 bits");
@@ -155,6 +156,10 @@ struct MultiArrayHelper<T, Size> {
     using ChildType = T;
 };
 
+template<typename To, typename From>
+constexpr bool is_strictly_assignable_v =
+  std::is_assignable_v<To&, From> && (std::is_same_v<To, From> || !std::is_convertible_v<From, To>);
+
 }
 
 // MultiArray is a generic N-dimensional array.
@@ -212,7 +217,8 @@ class MultiArray {
 
     template<typename U>
     void fill(const U& v) {
-        static_assert(std::is_assignable_v<T, U>, "Cannot assign fill value to entry type");
+        static_assert(Detail::is_strictly_assignable_v<T, U>,
+                      "Cannot assign fill value to entry type");
         for (auto& ele : data_)
         {
             if constexpr (sizeof...(Sizes) == 0)
@@ -310,6 +316,22 @@ void move_to_front(std::vector<T>& vec, Predicate pred) {
     }
 }
 }
+
+#if defined(__GNUC__) && !defined(__clang__)
+    #if __GNUC__ >= 13
+        #define sf_assume(cond) __attribute__((assume(cond)))
+    #else
+        #define sf_assume(cond) \
+            do \
+            { \
+                if (!(cond)) \
+                    __builtin_unreachable(); \
+            } while (0)
+    #endif
+#else
+    // do nothing for other compilers
+    #define sf_assume(cond)
+#endif
 
 }  // namespace Stockfish
 

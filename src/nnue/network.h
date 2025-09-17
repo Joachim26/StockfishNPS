@@ -29,12 +29,16 @@
 #include <utility>
 
 #include "../memory.h"
-#include "../position.h"
 #include "../types.h"
 #include "nnue_accumulator.h"
 #include "nnue_architecture.h"
+#include "nnue_common.h"
 #include "nnue_feature_transformer.h"
 #include "nnue_misc.h"
+
+namespace Stockfish {
+class Position;
+}
 
 namespace Stockfish::Eval::NNUE {
 
@@ -64,14 +68,13 @@ class Network {
     bool save(const std::optional<std::string>& filename) const;
 
     NetworkOutput evaluate(const Position&                         pos,
+                           AccumulatorStack&                       accumulatorStack,
                            AccumulatorCaches::Cache<FTDimensions>* cache) const;
 
 
-    void hint_common_access(const Position&                         pos,
-                            AccumulatorCaches::Cache<FTDimensions>* cache) const;
-
     void verify(std::string evalfilePath, const std::function<void(std::string_view)>&) const;
     NnueEvalTrace trace_evaluate(const Position&                         pos,
+                                 AccumulatorStack&                       accumulatorStack,
                                  AccumulatorCaches::Cache<FTDimensions>* cache) const;
 
    private:
@@ -103,16 +106,16 @@ class Network {
 
     template<IndexType Size>
     friend struct AccumulatorCaches::Cache;
+
+    friend class AccumulatorStack;
 };
 
 // Definitions of the network types
-using SmallFeatureTransformer =
-  FeatureTransformer<TransformedFeatureDimensionsSmall, &StateInfo::accumulatorSmall>;
+using SmallFeatureTransformer = FeatureTransformer<TransformedFeatureDimensionsSmall>;
 using SmallNetworkArchitecture =
   NetworkArchitecture<TransformedFeatureDimensionsSmall, L2Small, L3Small>;
 
-using BigFeatureTransformer =
-  FeatureTransformer<TransformedFeatureDimensionsBig, &StateInfo::accumulatorBig>;
+using BigFeatureTransformer  = FeatureTransformer<TransformedFeatureDimensionsBig>;
 using BigNetworkArchitecture = NetworkArchitecture<TransformedFeatureDimensionsBig, L2Big, L3Big>;
 
 using NetworkBig   = Network<BigNetworkArchitecture, BigFeatureTransformer>;
