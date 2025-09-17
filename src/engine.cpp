@@ -99,7 +99,7 @@ Engine::Engine(std::optional<std::string> path) :
       "Random Eval", Option(0, 0, 100, [](const Option& o) { 
           Eval::NNUE::RandomEval = o; 
           return std::nullopt; 
-      )));
+      }));
         
     options.add("Search Nodes", Option(0, 0, 1000000));
         
