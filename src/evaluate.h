@@ -39,6 +39,7 @@ namespace Eval {
 namespace NNUE {
 struct Networks;
 struct AccumulatorCaches;
+class AccumulatorStack;
 extern int RandomEval;
 extern int WaitMs;
 }
@@ -49,10 +50,11 @@ extern bool smallNetOn;
 
 std::string trace(Position& pos, const Eval::NNUE::Networks& networks);
 
-int   simple_eval(const Position& pos, Color c);
+int   simple_eval(const Position& pos);
 bool  use_smallnet(const Position& pos);
 Value evaluate(const NNUE::Networks&          networks,
                const Position&                pos,
+               Eval::NNUE::AccumulatorStack&  accumulators,
                Eval::NNUE::AccumulatorCaches& caches,
                int                            optimism);
 }  // namespace Eval
