@@ -1,6 +1,6 @@
 /*
   Stockfish, a UCI chess playing engine derived from Glaurung 2.1
-  Copyright (C) 2004-2024 The Stockfish developers (see AUTHORS file)
+  Copyright (C) 2004-2025 The Stockfish developers (see AUTHORS file)
 
   Stockfish is free software: you can redistribute it and/or modify
   it under the terms of the GNU General Public License as published by
@@ -134,11 +134,6 @@ class HalfKAv2_hm {
     template<Color Perspective>
     static void
     append_changed_indices(Square ksq, const DirtyPiece& dp, IndexList& removed, IndexList& added);
-
-    // Returns the cost of updating one perspective, the most costly one.
-    // Assumes no refresh needed.
-    static int update_cost(const StateInfo* st);
-    static int refresh_cost(const Position& pos);
 
     // Returns whether the change stored in this StateInfo means
     // that a full accumulator refresh is required.

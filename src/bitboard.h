@@ -1,6 +1,6 @@
 /*
   Stockfish, a UCI chess playing engine derived from Glaurung 2.1
-  Copyright (C) 2004-2024 The Stockfish developers (see AUTHORS file)
+  Copyright (C) 2004-2025 The Stockfish developers (see AUTHORS file)
 
   Stockfish is free software: you can redistribute it and/or modify
   it under the terms of the GNU General Public License as published by
@@ -22,6 +22,7 @@
 #include <algorithm>
 #include <cassert>
 #include <cmath>
+#include <cstring>
 #include <cstdint>
 #include <cstdlib>
 #include <string>
@@ -268,11 +269,10 @@ inline int popcount(Bitboard b) {
 
 #ifndef USE_POPCNT
 
-    union {
-        Bitboard bb;
-        uint16_t u[4];
-    } v = {b};
-    return PopCnt16[v.u[0]] + PopCnt16[v.u[1]] + PopCnt16[v.u[2]] + PopCnt16[v.u[3]];
+    std::uint16_t indices[4];
+    std::memcpy(indices, &b, sizeof(b));
+    return PopCnt16[indices[0]] + PopCnt16[indices[1]] + PopCnt16[indices[2]]
+         + PopCnt16[indices[3]];
 
 #elif defined(_MSC_VER)
 

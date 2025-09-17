@@ -1,6 +1,6 @@
 /*
   Stockfish, a UCI chess playing engine derived from Glaurung 2.1
-  Copyright (C) 2004-2024 The Stockfish developers (see AUTHORS file)
+  Copyright (C) 2004-2025 The Stockfish developers (see AUTHORS file)
 
   Stockfish is free software: you can redistribute it and/or modify
   it under the terms of the GNU General Public License as published by
@@ -154,6 +154,21 @@ constexpr Value VALUE_MATED_IN_MAX_PLY = -VALUE_MATE_IN_MAX_PLY;
 constexpr Value VALUE_TB                 = VALUE_MATE_IN_MAX_PLY - 1;
 constexpr Value VALUE_TB_WIN_IN_MAX_PLY  = VALUE_TB - MAX_PLY;
 constexpr Value VALUE_TB_LOSS_IN_MAX_PLY = -VALUE_TB_WIN_IN_MAX_PLY;
+
+
+constexpr bool is_valid(Value value) { return value != VALUE_NONE; }
+
+constexpr bool is_win(Value value) {
+    assert(is_valid(value));
+    return value >= VALUE_TB_WIN_IN_MAX_PLY;
+}
+
+constexpr bool is_loss(Value value) {
+    assert(is_valid(value));
+    return value <= VALUE_TB_LOSS_IN_MAX_PLY;
+}
+
+constexpr bool is_decisive(Value value) { return is_win(value) || is_loss(value); }
 
 // In the code, we make the assumption that these values
 // are such that non_pawn_material() can be used to uniquely

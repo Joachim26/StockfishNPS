@@ -1,6 +1,6 @@
 /*
   Stockfish, a UCI chess playing engine derived from Glaurung 2.1
-  Copyright (C) 2004-2024 The Stockfish developers (see AUTHORS file)
+  Copyright (C) 2004-2025 The Stockfish developers (see AUTHORS file)
 
   Stockfish is free software: you can redistribute it and/or modify
   it under the terms of the GNU General Public License as published by
@@ -30,7 +30,6 @@
 #include <string_view>
 #include <tuple>
 
-#include "../evaluate.h"
 #include "../position.h"
 #include "../types.h"
 #include "../uci.h"
@@ -128,7 +127,7 @@ trace(Position& pos, const Eval::NNUE::Networks& networks, Eval::NNUE::Accumulat
         board[y][x] = board[y][x + 8] = board[y + 3][x + 8] = board[y + 3][x] = '+';
         if (pc != NO_PIECE)
             board[y + 1][x + 4] = PieceToChar[pc];
-        if (value != VALUE_NONE)
+        if (is_valid(value))
             format_cp_compact(value, &board[y + 2][x + 2], pos);
     };
 
