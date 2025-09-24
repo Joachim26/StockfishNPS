@@ -156,7 +156,8 @@ Engine::Engine(std::optional<std::string> path) :
       "EvalFileSmall", Option(EvalFileDefaultNameSmall, [this](const Option& o) {
           load_small_network(o);
           return std::nullopt;
-
+      }));
+        
     load_networks();
     resize_threads();
 }
