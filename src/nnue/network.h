@@ -1,6 +1,6 @@
 /*
   Stockfish, a UCI chess playing engine derived from Glaurung 2.1
-  Copyright (C) 2004-2024 The Stockfish developers (see AUTHORS file)
+  Copyright (C) 2004-2025 The Stockfish developers (see AUTHORS file)
 
   Stockfish is free software: you can redistribute it and/or modify
   it under the terms of the GNU General Public License as published by
@@ -20,18 +20,25 @@
 #define NETWORK_H_INCLUDED
 
 #include <cstdint>
+#include <functional>
 #include <iostream>
 #include <optional>
 #include <string>
+#include <string_view>
+#include <tuple>
 #include <utility>
 
-#include "../misc.h"
-#include "../position.h"
+#include "../memory.h"
 #include "../types.h"
+#include "nnue_accumulator.h"
 #include "nnue_architecture.h"
+#include "nnue_common.h"
 #include "nnue_feature_transformer.h"
 #include "nnue_misc.h"
-#include "nnue_accumulator.h"
+
+namespace Stockfish {
+class Position;
+}
 
 namespace Stockfish::Eval::NNUE {
 
@@ -40,6 +47,7 @@ enum class EmbeddedNNUEType {
     SMALL,
 };
 
+using NetworkOutput = std::tuple<Value, Value>;
 
 template<typename Arch, typename Transformer>
 class Network {
@@ -50,20 +58,23 @@ class Network {
         evalFile(file),
         embeddedType(type) {}
 
+    Network(const Network& other);
+    Network(Network&& other) = default;
+
+    Network& operator=(const Network& other);
+    Network& operator=(Network&& other) = default;
+
     void load(const std::string& rootDirectory, std::string evalfilePath);
     bool save(const std::optional<std::string>& filename) const;
 
-    Value evaluate(const Position&                         pos,
-                   AccumulatorCaches::Cache<FTDimensions>* cache,
-                   bool                                    adjusted   = false,
-                   int*                                    complexity = nullptr) const;
+    NetworkOutput evaluate(const Position&                         pos,
+                           AccumulatorStack&                       accumulatorStack,
+                           AccumulatorCaches::Cache<FTDimensions>* cache) const;
 
 
-    void hint_common_access(const Position&                         pos,
-                            AccumulatorCaches::Cache<FTDimensions>* cache) const;
-
-    void          verify(std::string evalfilePath) const;
+    void verify(std::string evalfilePath, const std::function<void(std::string_view)>&) const;
     NnueEvalTrace trace_evaluate(const Position&                         pos,
+                                 AccumulatorStack&                       accumulatorStack,
                                  AccumulatorCaches::Cache<FTDimensions>* cache) const;
 
    private:
@@ -85,7 +96,7 @@ class Network {
     LargePagePtr<Transformer> featureTransformer;
 
     // Evaluation function
-    AlignedPtr<Arch> network[LayerStacks];
+    AlignedPtr<Arch[]> network;
 
     EvalFile         evalFile;
     EmbeddedNNUEType embeddedType;
@@ -95,16 +106,16 @@ class Network {
 
     template<IndexType Size>
     friend struct AccumulatorCaches::Cache;
+
+    friend class AccumulatorStack;
 };
 
 // Definitions of the network types
-using SmallFeatureTransformer =
-  FeatureTransformer<TransformedFeatureDimensionsSmall, &StateInfo::accumulatorSmall>;
+using SmallFeatureTransformer = FeatureTransformer<TransformedFeatureDimensionsSmall>;
 using SmallNetworkArchitecture =
   NetworkArchitecture<TransformedFeatureDimensionsSmall, L2Small, L3Small>;
 
-using BigFeatureTransformer =
-  FeatureTransformer<TransformedFeatureDimensionsBig, &StateInfo::accumulatorBig>;
+using BigFeatureTransformer  = FeatureTransformer<TransformedFeatureDimensionsBig>;
 using BigNetworkArchitecture = NetworkArchitecture<TransformedFeatureDimensionsBig, L2Big, L3Big>;
 
 using NetworkBig   = Network<BigNetworkArchitecture, BigFeatureTransformer>;

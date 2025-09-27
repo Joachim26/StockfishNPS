@@ -1,6 +1,6 @@
 /*
   Stockfish, a UCI chess playing engine derived from Glaurung 2.1
-  Copyright (C) 2004-2024 The Stockfish developers (see AUTHORS file)
+  Copyright (C) 2004-2025 The Stockfish developers (see AUTHORS file)
 
   Stockfish is free software: you can redistribute it and/or modify
   it under the terms of the GNU General Public License as published by
@@ -28,8 +28,8 @@
 #include <iostream>
 #include <sstream>
 #include <string_view>
+#include <tuple>
 
-#include "../evaluate.h"
 #include "../position.h"
 #include "../types.h"
 #include "../uci.h"
@@ -41,17 +41,6 @@ namespace Stockfish::Eval::NNUE {
 
 constexpr std::string_view PieceToChar(" PNBRQK  pnbrqk");
 
-
-void hint_common_parent_position(const Position&    pos,
-                                 const Networks&    networks,
-                                 AccumulatorCaches& caches) {
-
-    int simpleEvalAbs = std::abs(simple_eval(pos, pos.side_to_move()));
-    if (Stockfish::Eval::smallNetOn || (simpleEvalAbs > Eval::SmallNetThreshold))
-        networks.small.hint_common_access(pos, &caches.small);
-    else
-        networks.big.hint_common_access(pos, &caches.big);
-}
 
 namespace {
 // Converts a Value into (centi)pawns and writes it in a buffer.
@@ -127,14 +116,17 @@ trace(Position& pos, const Eval::NNUE::Networks& networks, Eval::NNUE::Accumulat
         board[y][x] = board[y][x + 8] = board[y + 3][x + 8] = board[y + 3][x] = '+';
         if (pc != NO_PIECE)
             board[y + 1][x + 4] = PieceToChar[pc];
-        if (value != VALUE_NONE)
+        if (is_valid(value))
             format_cp_compact(value, &board[y + 2][x + 2], pos);
     };
 
+    AccumulatorStack accumulators;
+
     // We estimate the value of each piece by doing a differential evaluation from
     // the current base eval, simulating the removal of the piece from its square.
-    Value base = networks.big.evaluate(pos, &caches.big);
-    base       = pos.side_to_move() == WHITE ? base : -base;
+    auto [psqt, positional] = networks.big.evaluate(pos, accumulators, &caches.big);
+    Value base              = psqt + positional;
+    base                    = pos.side_to_move() == WHITE ? base : -base;
 
     for (File f = FILE_A; f <= FILE_H; ++f)
         for (Rank r = RANK_1; r <= RANK_8; ++r)
@@ -145,17 +137,15 @@ trace(Position& pos, const Eval::NNUE::Networks& networks, Eval::NNUE::Accumulat
 
             if (pc != NO_PIECE && type_of(pc) != KING)
             {
-                auto st = pos.state();
-
                 pos.remove_piece(sq);
-                st->accumulatorBig.computed[WHITE] = st->accumulatorBig.computed[BLACK] = false;
 
-                Value eval = networks.big.evaluate(pos, &caches.big);
-                eval       = pos.side_to_move() == WHITE ? eval : -eval;
-                v          = base - eval;
+                accumulators.reset();
+                std::tie(psqt, positional) = networks.big.evaluate(pos, accumulators, &caches.big);
+                Value eval                 = psqt + positional;
+                eval                       = pos.side_to_move() == WHITE ? eval : -eval;
+                v                          = base - eval;
 
                 pos.put_piece(pc, sq);
-                st->accumulatorBig.computed[WHITE] = st->accumulatorBig.computed[BLACK] = false;
             }
 
             writeSquare(f, r, pc, v);
@@ -166,7 +156,8 @@ trace(Position& pos, const Eval::NNUE::Networks& networks, Eval::NNUE::Accumulat
         ss << board[row] << '\n';
     ss << '\n';
 
-    auto t = networks.big.trace_evaluate(pos, &caches.big);
+    accumulators.reset();
+    auto t = networks.big.trace_evaluate(pos, accumulators, &caches.big);
 
     ss << " NNUE network contributions "
        << (pos.side_to_move() == WHITE ? "(White to move)" : "(Black to move)") << std::endl
@@ -177,16 +168,16 @@ trace(Position& pos, const Eval::NNUE::Networks& networks, Eval::NNUE::Accumulat
 
     for (std::size_t bucket = 0; bucket < LayerStacks; ++bucket)
     {
-        ss << "|  " << bucket << "        ";
-        ss << " |  ";
+        ss << "|  " << bucket << "        "  //
+           << " |  ";
         format_cp_aligned_dot(t.psqt[bucket], ss, pos);
-        ss << "  "
+        ss << "  "  //
            << " |  ";
         format_cp_aligned_dot(t.positional[bucket], ss, pos);
-        ss << "  "
+        ss << "  "  //
            << " |  ";
         format_cp_aligned_dot(t.psqt[bucket] + t.positional[bucket], ss, pos);
-        ss << "  "
+        ss << "  "  //
            << " |";
         if (bucket == t.correctBucket)
             ss << " <-- this bucket is used";

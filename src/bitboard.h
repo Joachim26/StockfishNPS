@@ -1,6 +1,6 @@
 /*
   Stockfish, a UCI chess playing engine derived from Glaurung 2.1
-  Copyright (C) 2004-2024 The Stockfish developers (see AUTHORS file)
+  Copyright (C) 2004-2025 The Stockfish developers (see AUTHORS file)
 
   Stockfish is free software: you can redistribute it and/or modify
   it under the terms of the GNU General Public License as published by
@@ -22,6 +22,7 @@
 #include <algorithm>
 #include <cassert>
 #include <cmath>
+#include <cstring>
 #include <cstdint>
 #include <cstdlib>
 #include <string>
@@ -61,33 +62,36 @@ extern uint8_t SquareDistance[SQUARE_NB][SQUARE_NB];
 extern Bitboard BetweenBB[SQUARE_NB][SQUARE_NB];
 extern Bitboard LineBB[SQUARE_NB][SQUARE_NB];
 extern Bitboard PseudoAttacks[PIECE_TYPE_NB][SQUARE_NB];
-extern Bitboard PawnAttacks[COLOR_NB][SQUARE_NB];
 
 
 // Magic holds all magic bitboards relevant data for a single square
 struct Magic {
     Bitboard  mask;
-    Bitboard  magic;
     Bitboard* attacks;
-    unsigned  shift;
+#ifndef USE_PEXT
+    Bitboard magic;
+    unsigned shift;
+#endif
 
     // Compute the attack's index using the 'magic bitboards' approach
     unsigned index(Bitboard occupied) const {
 
-        if (HasPext)
-            return unsigned(pext(occupied, mask));
-
+#ifdef USE_PEXT
+        return unsigned(pext(occupied, mask));
+#else
         if (Is64Bit)
             return unsigned(((occupied & mask) * magic) >> shift);
 
         unsigned lo = unsigned(occupied) & unsigned(mask);
         unsigned hi = unsigned(occupied >> 32) & unsigned(mask >> 32);
         return (lo * unsigned(magic) ^ hi * unsigned(magic >> 32)) >> shift;
+#endif
     }
+
+    Bitboard attacks_bb(Bitboard occupied) const { return attacks[index(occupied)]; }
 };
 
-extern Magic RookMagics[SQUARE_NB];
-extern Magic BishopMagics[SQUARE_NB];
+extern Magic Magics[SQUARE_NB][2];
 
 constexpr Bitboard square_bb(Square s) {
     assert(is_ok(s));
@@ -98,17 +102,17 @@ constexpr Bitboard square_bb(Square s) {
 // Overloads of bitwise operators between a Bitboard and a Square for testing
 // whether a given bit is set in a bitboard, and for setting and clearing bits.
 
-inline Bitboard  operator&(Bitboard b, Square s) { return b & square_bb(s); }
-inline Bitboard  operator|(Bitboard b, Square s) { return b | square_bb(s); }
-inline Bitboard  operator^(Bitboard b, Square s) { return b ^ square_bb(s); }
-inline Bitboard& operator|=(Bitboard& b, Square s) { return b |= square_bb(s); }
-inline Bitboard& operator^=(Bitboard& b, Square s) { return b ^= square_bb(s); }
+constexpr Bitboard  operator&(Bitboard b, Square s) { return b & square_bb(s); }
+constexpr Bitboard  operator|(Bitboard b, Square s) { return b | square_bb(s); }
+constexpr Bitboard  operator^(Bitboard b, Square s) { return b ^ square_bb(s); }
+constexpr Bitboard& operator|=(Bitboard& b, Square s) { return b |= square_bb(s); }
+constexpr Bitboard& operator^=(Bitboard& b, Square s) { return b ^= square_bb(s); }
 
-inline Bitboard operator&(Square s, Bitboard b) { return b & s; }
-inline Bitboard operator|(Square s, Bitboard b) { return b | s; }
-inline Bitboard operator^(Square s, Bitboard b) { return b ^ s; }
+constexpr Bitboard operator&(Square s, Bitboard b) { return b & s; }
+constexpr Bitboard operator|(Square s, Bitboard b) { return b | s; }
+constexpr Bitboard operator^(Square s, Bitboard b) { return b ^ s; }
 
-inline Bitboard operator|(Square s1, Square s2) { return square_bb(s1) | s2; }
+constexpr Bitboard operator|(Square s1, Square s2) { return square_bb(s1) | s2; }
 
 constexpr bool more_than_one(Bitboard b) { return b & (b - 1); }
 
@@ -150,11 +154,6 @@ constexpr Bitboard pawn_attacks_bb(Bitboard b) {
                       : shift<SOUTH_WEST>(b) | shift<SOUTH_EAST>(b);
 }
 
-inline Bitboard pawn_attacks_bb(Color c, Square s) {
-
-    assert(is_ok(s));
-    return PawnAttacks[c][s];
-}
 
 // Returns a bitboard representing an entire line (from board edge
 // to board edge) that intersects the two given squares. If the given squares
@@ -179,11 +178,6 @@ inline Bitboard between_bb(Square s1, Square s2) {
     assert(is_ok(s1) && is_ok(s2));
     return BetweenBB[s1][s2];
 }
-
-// Returns true if the squares s1, s2 and s3 are aligned either on a
-// straight or on a diagonal line.
-inline bool aligned(Square s1, Square s2, Square s3) { return line_bb(s1, s2) & s3; }
-
 
 // distance() functions return the distance between x and y, defined as the
 // number of steps for a king in x to reach y.
@@ -211,10 +205,10 @@ inline int edge_distance(File f) { return std::min(f, File(FILE_H - f)); }
 // Returns the pseudo attacks of the given piece type
 // assuming an empty board.
 template<PieceType Pt>
-inline Bitboard attacks_bb(Square s) {
+inline Bitboard attacks_bb(Square s, Color c = COLOR_NB) {
 
-    assert((Pt != PAWN) && (is_ok(s)));
-    return PseudoAttacks[Pt][s];
+    assert((Pt != PAWN || c < COLOR_NB) && (is_ok(s)));
+    return Pt == PAWN ? PseudoAttacks[c][s] : PseudoAttacks[Pt][s];
 }
 
 
@@ -229,9 +223,8 @@ inline Bitboard attacks_bb(Square s, Bitboard occupied) {
     switch (Pt)
     {
     case BISHOP :
-        return BishopMagics[s].attacks[BishopMagics[s].index(occupied)];
     case ROOK :
-        return RookMagics[s].attacks[RookMagics[s].index(occupied)];
+        return Magics[s][Pt - BISHOP].attacks_bb(occupied);
     case QUEEN :
         return attacks_bb<BISHOP>(s, occupied) | attacks_bb<ROOK>(s, occupied);
     default :
@@ -265,11 +258,10 @@ inline int popcount(Bitboard b) {
 
 #ifndef USE_POPCNT
 
-    union {
-        Bitboard bb;
-        uint16_t u[4];
-    } v = {b};
-    return PopCnt16[v.u[0]] + PopCnt16[v.u[1]] + PopCnt16[v.u[2]] + PopCnt16[v.u[3]];
+    std::uint16_t indices[4];
+    std::memcpy(indices, &b, sizeof(b));
+    return PopCnt16[indices[0]] + PopCnt16[indices[1]] + PopCnt16[indices[2]]
+         + PopCnt16[indices[3]];
 
 #elif defined(_MSC_VER)
 

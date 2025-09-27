@@ -1,6 +1,6 @@
 /*
   Stockfish, a UCI chess playing engine derived from Glaurung 2.1
-  Copyright (C) 2004-2024 The Stockfish developers (see AUTHORS file)
+  Copyright (C) 2004-2025 The Stockfish developers (see AUTHORS file)
 
   Stockfish is free software: you can redistribute it and/or modify
   it under the terms of the GNU General Public License as published by
@@ -29,8 +29,6 @@ class Position;
 
 namespace Eval {
 
-constexpr inline int SmallNetThreshold = 4 * PawnValue;
-
 // The default net name MUST follow the format nn-[SHA256 first 12 digits].nnue
 // for the build process (profile-build and fishtest) to work. Do not change the
 // name of the macro or the location where this macro is defined, as it is used
@@ -41,6 +39,7 @@ constexpr inline int SmallNetThreshold = 4 * PawnValue;
 namespace NNUE {
 struct Networks;
 struct AccumulatorCaches;
+class AccumulatorStack;
 extern int RandomEval;
 extern int WaitMs;
 }
@@ -51,9 +50,11 @@ extern bool smallNetOn;
 
 std::string trace(Position& pos, const Eval::NNUE::Networks& networks);
 
-int   simple_eval(const Position& pos, Color c);
+int   simple_eval(const Position& pos);
+bool  use_smallnet(const Position& pos);
 Value evaluate(const NNUE::Networks&          networks,
                const Position&                pos,
+               Eval::NNUE::AccumulatorStack&  accumulators,
                Eval::NNUE::AccumulatorCaches& caches,
                int                            optimism);
 }  // namespace Eval
