@@ -92,6 +92,24 @@ Engine::Engine(std::optional<std::string> path) :
           set_tt_size(o);
           return std::nullopt;
       }));
+      
+    options.add(  //
+      "Wait ms", Option(0, 0, 100, [](const Option& o) { 
+          Eval::NNUE::WaitMs = o; 
+          return std::nullopt; 
+      }));
+      
+    options.add(  //
+      "Random Eval", Option(0, 0, 100, [](const Option& o) { 
+          Eval::NNUE::RandomEval = o; 
+          return std::nullopt; 
+      }));
+        
+    options.add("Search Nodes", Option(0, 0, 1000000));
+        
+    options.add("Search Depth", Option(0, 0, 20));
+     
+    options.add("Smallnet Threshold", Option(200, 0, 10000));
 
     options.add(  //
       "Clear Hash", Option([this](const Option&) {
@@ -108,6 +126,8 @@ Engine::Engine(std::optional<std::string> path) :
     options.add("Skill Level", Option(20, 0, 20));
 
     options.add("Move Overhead", Option(10, 0, 5000));
+
+    options.add("Slow Mover", Option(100, 10, 1000));
 
     options.add("nodestime", Option(0, 0, 10000));
 

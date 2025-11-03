@@ -179,6 +179,29 @@ void Search::Worker::start_searching() {
                             main_manager()->originalTimeAdjust);
     tt.new_search();
 
+    //SFnps Begin
+    namespace SE = Stockfish::Eval;
+    
+    static int smallnetTH = int(options["Smallnet Threshold"]);
+    static int smallnetHyst = 20;
+    static bool lastSmallNetOn = false;
+  
+    SE::tmOptTime = main_manager()->tm.optimum();
+
+    if (lastSmallNetOn) {
+          SE::smallNetOn = (SE::tmOptTime < smallnetTH + smallnetHyst);
+    } 
+    else {
+          SE::smallNetOn = (SE::tmOptTime < smallnetTH - smallnetHyst);
+    }
+    lastSmallNetOn = SE::smallNetOn;
+
+    std::cout << "OptimalTime " << SE::tmOptTime << sync_endl; 
+
+    if (options["Search Nodes"]) limits.nodes = int(options["Search Nodes"]);
+    if (options["Search Depth"]) limits.depth = int(options["Search Depth"]);
+    //SFnps End
+
     if (rootMoves.empty())
     {
         rootMoves.emplace_back(Move::none());
