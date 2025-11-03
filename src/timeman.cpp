@@ -60,6 +60,7 @@ void TimeManagement::init(Search::LimitsType& limits,
         return;
 
     TimePoint moveOverhead = TimePoint(options["Move Overhead"]);
+    TimePoint slowMover    = TimePoint(options["Slow Mover"]);
 
     // optScale is a percentage of available time to use for the current move.
     // maxScale is a multiplier applied to optimumTime.
@@ -99,6 +100,10 @@ void TimeManagement::init(Search::LimitsType& limits,
                limits.time[us]
                  + (limits.inc[us] * (centiMTG - 100) - moveOverhead * (200 + centiMTG)) / 100);
 
+    // A user may scale time usage by setting UCI option "Slow Mover"
+    // Default is 100 and changing this value will probably lose elo.
+    timeLeft = slowMover * timeLeft / 100;
+ 
     // x basetime (+ z increment)
     // If there is a healthy increment, timeLeft can exceed the actual available
     // game time for the current move, so also cap to a percentage of available game time.
