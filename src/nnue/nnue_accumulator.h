@@ -25,6 +25,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <utility>
 
 #include "../types.h"
 #include "nnue_architecture.h"
@@ -76,10 +77,9 @@ struct AccumulatorCaches {
             // To initialize a refresh entry, we set all its bitboards empty,
             // so we put the biases in the accumulation, without any weights on top
             void clear(const std::array<BiasType, Size>& biases) {
-
                 accumulation = biases;
-                std::memset((uint8_t*) this + offsetof(Entry, psqtAccumulation), 0,
-                            sizeof(Entry) - offsetof(Entry, psqtAccumulation));
+                std::memset(reinterpret_cast<std::byte*>(this) + offsetof(Entry, psqtAccumulation),
+                            0, sizeof(Entry) - offsetof(Entry, psqtAccumulation));
             }
         };
 
@@ -141,6 +141,12 @@ struct AccumulatorState {
         accumulatorBig.computed.fill(false);
         accumulatorSmall.computed.fill(false);
     }
+
+    typename FeatureSet::DiffType& reset() noexcept {
+        accumulatorBig.computed.fill(false);
+        accumulatorSmall.computed.fill(false);
+        return diff;
+    }
 };
 
 class AccumulatorStack {
@@ -150,9 +156,10 @@ class AccumulatorStack {
     template<typename T>
     [[nodiscard]] const AccumulatorState<T>& latest() const noexcept;
 
-    void reset() noexcept;
-    void push(const DirtyBoardData& dirtyBoardData) noexcept;
-    void pop() noexcept;
+    void                                  reset() noexcept;
+    void                                  push(const DirtyBoardData& dirtyBoardData) noexcept;
+    std::pair<DirtyPiece&, DirtyThreats&> push() noexcept;
+    void                                  pop() noexcept;
 
     template<IndexType Dimensions>
     void evaluate(const Position&                       pos,

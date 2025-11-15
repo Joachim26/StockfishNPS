@@ -201,7 +201,7 @@ Position& Position::set(const string& fenStr, bool isChess960, StateInfo* si) {
     Square             sq = SQ_A8;
     std::istringstream ss(fenStr);
 
-    std::memset(this, 0, sizeof(Position));
+    std::memset(reinterpret_cast<char*>(this), 0, sizeof(Position));
     std::memset(si, 0, sizeof(StateInfo));
     st = si;
 
@@ -336,8 +336,8 @@ void Position::set_check_info() const {
 // The function is only used when a new position is set up
 void Position::set_state() const {
 
-    st->key = st->materialKey = 0;
-    st->minorPieceKey         = 0;
+    st->key               = 0;
+    st->minorPieceKey     = 0;
     st->nonPawnKey[WHITE] = st->nonPawnKey[BLACK] = 0;
     st->pawnKey                                   = Zobrist::noPawns;
     st->nonPawnMaterial[WHITE] = st->nonPawnMaterial[BLACK] = VALUE_ZERO;
@@ -375,10 +375,15 @@ void Position::set_state() const {
         st->key ^= Zobrist::side;
 
     st->key ^= Zobrist::castling[st->castlingRights];
+    st->materialKey = compute_material_key();
+}
 
+Key Position::compute_material_key() const {
+    Key k = 0;
     for (Piece pc : Pieces)
         for (int cnt = 0; cnt < pieceCount[pc]; ++cnt)
-            st->materialKey ^= Zobrist::psq[pc][8 + cnt];
+            k ^= Zobrist::psq[pc][8 + cnt];
+    return k;
 }
 
 
@@ -688,10 +693,12 @@ bool Position::gives_check(Move m) const {
 // moves should be filtered out before this function is called.
 // If a pointer to the TT table is passed, the entry for the new position
 // will be prefetched
-DirtyBoardData Position::do_move(Move                      m,
-                                 StateInfo&                newSt,
-                                 bool                      givesCheck,
-                                 const TranspositionTable* tt = nullptr) {
+void Position::do_move(Move                      m,
+                       StateInfo&                newSt,
+                       bool                      givesCheck,
+                       DirtyPiece&               dp,
+                       DirtyThreats&             dts,
+                       const TranspositionTable* tt = nullptr) {
 
     assert(m.is_ok());
     assert(&newSt != st);
@@ -720,12 +727,10 @@ DirtyBoardData Position::do_move(Move                      m,
 
     bool checkEP = false;
 
-    DirtyPiece dp;
-    dp.pc     = pc;
-    dp.from   = from;
-    dp.to     = to;
-    dp.add_sq = SQ_NONE;
-    DirtyThreats dts;
+    dp.pc             = pc;
+    dp.from           = from;
+    dp.to             = to;
+    dp.add_sq         = SQ_NONE;
     dts.us            = us;
     dts.prevKsq       = square<KING>(us);
     dts.threatenedSqs = dts.threateningSqs = 0;
@@ -970,8 +975,6 @@ DirtyBoardData Position::do_move(Move                      m,
     assert(!(bool(captured) || m.type_of() == CASTLING) ^ (dp.remove_sq != SQ_NONE));
     assert(dp.from != SQ_NONE);
     assert(!(dp.add_sq != SQ_NONE) ^ (m.type_of() == PROMOTION || m.type_of() == CASTLING));
-
-    return {dp, dts};
 }
 
 
@@ -1051,12 +1054,22 @@ inline void add_dirty_threat(
 
 template<bool PutPiece, bool ComputeRay>
 void Position::update_piece_threats(Piece pc, Square s, DirtyThreats* const dts) {
-    // Add newly threatened pieces
-    Bitboard occupied = pieces();
+    const Bitboard occupied     = pieces();
+    const Bitboard rookQueens   = pieces(ROOK, QUEEN);
+    const Bitboard bishopQueens = pieces(BISHOP, QUEEN);
+    const Bitboard knights      = pieces(KNIGHT);
+    const Bitboard kings        = pieces(KING);
+    const Bitboard whitePawns   = pieces(WHITE, PAWN);
+    const Bitboard blackPawns   = pieces(BLACK, PAWN);
 
-    Bitboard rAttacks = attacks_bb<ROOK>(s, occupied);
-    Bitboard bAttacks = attacks_bb<BISHOP>(s, occupied);
-    Bitboard qAttacks = rAttacks | bAttacks;
+    const Bitboard rAttacks = attacks_bb<ROOK>(s, occupied);
+    const Bitboard bAttacks = attacks_bb<BISHOP>(s, occupied);
+
+    Bitboard qAttacks = Bitboard(0);
+    if constexpr (ComputeRay)
+        qAttacks = rAttacks | bAttacks;
+    else if (type_of(pc) == QUEEN)
+        qAttacks = rAttacks | bAttacks;
 
     Bitboard threatened;
 
@@ -1083,54 +1096,61 @@ void Position::update_piece_threats(Piece pc, Square s, DirtyThreats* const dts)
 
     while (threatened)
     {
-        Square threatened_sq = pop_lsb(threatened);
-        Piece  threatened_pc = piece_on(threatened_sq);
+        Square threatenedSq = pop_lsb(threatened);
+        Piece  threatenedPc = piece_on(threatenedSq);
 
-        assert(threatened_sq != s);
-        assert(threatened_pc);
+        assert(threatenedSq != s);
+        assert(threatenedPc);
 
-        add_dirty_threat<PutPiece>(dts, pc, threatened_pc, s, threatened_sq);
+        add_dirty_threat<PutPiece>(dts, pc, threatenedPc, s, threatenedSq);
     }
 
-    Bitboard sliders = (pieces(ROOK, QUEEN) & rAttacks) | (pieces(BISHOP, QUEEN) & bAttacks);
+    Bitboard sliders = (rookQueens & rAttacks) | (bishopQueens & bAttacks);
 
-    Bitboard incoming_threats = (attacks_bb<KNIGHT>(s, occupied) & pieces(KNIGHT))
-                              | (attacks_bb<PAWN>(s, WHITE) & pieces(BLACK, PAWN))
-                              | (attacks_bb<PAWN>(s, BLACK) & pieces(WHITE, PAWN))
-                              | (attacks_bb<KING>(s, occupied) & pieces(KING));
-
-    while (sliders)
+    if constexpr (ComputeRay)
     {
-        Square slider_sq = pop_lsb(sliders);
-        Piece  slider    = piece_on(slider_sq);
-
-        Bitboard ray = RayPassBB[slider_sq][s] & ~BetweenBB[slider_sq][s];
-        threatened   = ray & qAttacks & occupied;
-
-        assert(!more_than_one(threatened));
-        if (ComputeRay && threatened)
+        while (sliders)
         {
-            Square threatened_sq = lsb(threatened);
+            Square sliderSq = pop_lsb(sliders);
+            Piece  slider   = piece_on(sliderSq);
 
-            Piece threatened_pc = piece_on(threatened_sq);
-            add_dirty_threat<!PutPiece>(dts, slider, threatened_pc, slider_sq, threatened_sq);
+            const Bitboard ray        = RayPassBB[sliderSq][s] & ~BetweenBB[sliderSq][s];
+            const Bitboard discovered = ray & qAttacks & occupied;
+
+            assert(!more_than_one(discovered));
+            if (discovered)
+            {
+                const Square threatenedSq = lsb(discovered);
+                const Piece  threatenedPc = piece_on(threatenedSq);
+                add_dirty_threat<!PutPiece>(dts, slider, threatenedPc, sliderSq, threatenedSq);
+            }
+
+            add_dirty_threat<PutPiece>(dts, slider, pc, sliderSq, s);
         }
-
-        add_dirty_threat<PutPiece>(dts, slider, pc, slider_sq, s);
+    }
+    else
+    {
+        while (sliders)
+        {
+            Square sliderSq = pop_lsb(sliders);
+            Piece  slider   = piece_on(sliderSq);
+            add_dirty_threat<PutPiece>(dts, slider, pc, sliderSq, s);
+        }
     }
 
-    // Add threats of sliders that were already threatening s,
-    // sliders are already handled in the loop above
+    Bitboard incoming_threats =
+      (PseudoAttacks[KNIGHT][s] & knights) | (attacks_bb<PAWN>(s, WHITE) & blackPawns)
+      | (attacks_bb<PAWN>(s, BLACK) & whitePawns) | (PseudoAttacks[KING][s] & kings);
 
     while (incoming_threats)
     {
-        Square src_sq = pop_lsb(incoming_threats);
-        Piece  src_pc = piece_on(src_sq);
+        Square srcSq = pop_lsb(incoming_threats);
+        Piece  srcPc = piece_on(srcSq);
 
-        assert(src_sq != s);
-        assert(src_pc != NO_PIECE);
+        assert(srcSq != s);
+        assert(srcPc != NO_PIECE);
 
-        add_dirty_threat<PutPiece>(dts, src_pc, pc, src_sq, s);
+        add_dirty_threat<PutPiece>(dts, srcPc, pc, srcSq, s);
     }
 }
 
@@ -1432,6 +1452,9 @@ void Position::flip() {
 }
 
 
+bool Position::material_key_is_ok() const { return compute_material_key() == st->materialKey; }
+
+
 // Performs some consistency checks for the position object
 // and raise an assert if something wrong is detected.
 // This is meant to be helpful when debugging.
@@ -1480,6 +1503,8 @@ bool Position::pos_is_ok() const {
                 || (castlingRightsMask[square<KING>(c)] & cr) != cr)
                 assert(0 && "pos_is_ok: Castling");
         }
+
+    assert(material_key_is_ok() && "pos_is_ok: materialKey");
 
     return true;
 }

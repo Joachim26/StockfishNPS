@@ -21,6 +21,7 @@
 #include <algorithm>
 #include <cassert>
 #include <cstdint>
+#include <new>
 #include <type_traits>
 
 #include "../bitboard.h"
@@ -122,11 +123,13 @@ void AccumulatorStack::reset() noexcept {
     size = 1;
 }
 
-void AccumulatorStack::push(const DirtyBoardData& dirtyBoardData) noexcept {
+std::pair<DirtyPiece&, DirtyThreats&> AccumulatorStack::push() noexcept {
     assert(size < MaxSize);
-    psq_accumulators[size].reset(dirtyBoardData.dp);
-    threat_accumulators[size].reset(dirtyBoardData.dts);
+    auto& dp  = psq_accumulators[size].reset();
+    auto& dts = threat_accumulators[size].reset();
+    new (&dts) DirtyThreats;
     size++;
+    return {dp, dts};
 }
 
 void AccumulatorStack::pop() noexcept {
@@ -336,7 +339,8 @@ struct AccumulatorUpdateContext {
           to_psqt_weight_vector(indices)...);
     }
 
-    void apply(typename FeatureSet::IndexList added, typename FeatureSet::IndexList removed) {
+    void apply(const typename FeatureSet::IndexList& added,
+               const typename FeatureSet::IndexList& removed) {
         const auto fromAcc = from.template acc<Dimensions>().accumulation[Perspective];
         const auto toAcc   = to.template acc<Dimensions>().accumulation[Perspective];
 
@@ -573,6 +577,21 @@ void update_accumulator_incremental(
         FeatureSet::template append_changed_indices<Perspective>(ksq, computed.diff, added,
                                                                  removed);
 
+    if (!added.size() && !removed.size())
+    {
+        auto&       targetAcc = target_state.template acc<TransformedFeatureDimensions>();
+        const auto& sourceAcc = computed.template acc<TransformedFeatureDimensions>();
+
+        std::memcpy(targetAcc.accumulation[Perspective], sourceAcc.accumulation[Perspective],
+                    sizeof(targetAcc.accumulation[Perspective]));
+        std::memcpy(targetAcc.psqtAccumulation[Perspective],
+                    sourceAcc.psqtAccumulation[Perspective],
+                    sizeof(targetAcc.psqtAccumulation[Perspective]));
+
+        targetAcc.computed[Perspective] = true;
+        return;
+    }
+
     auto updateContext =
       make_accumulator_update_context<Perspective>(featureTransformer, computed, target_state);
 
@@ -617,25 +636,26 @@ void update_accumulator_incremental(
     (target_state.template acc<TransformedFeatureDimensions>()).computed[Perspective] = true;
 }
 
-Bitboard get_changed_pieces(const Piece old[SQUARE_NB], const Piece new_[SQUARE_NB]) {
+Bitboard get_changed_pieces(const Piece oldPieces[SQUARE_NB], const Piece newPieces[SQUARE_NB]) {
 #if defined(USE_AVX512) || defined(USE_AVX2)
     static_assert(sizeof(Piece) == 1);
-    Bitboard same_bb = 0;
+    Bitboard sameBB = 0;
+
     for (int i = 0; i < 64; i += 32)
     {
-        const __m256i       old_v = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(old + i));
-        const __m256i       new_v = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(new_ + i));
-        const __m256i       cmp_equal  = _mm256_cmpeq_epi8(old_v, new_v);
-        const std::uint32_t equal_mask = _mm256_movemask_epi8(cmp_equal);
-        same_bb |= static_cast<Bitboard>(equal_mask) << i;
+        const __m256i old_v = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(oldPieces + i));
+        const __m256i new_v = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(newPieces + i));
+        const __m256i cmpEqual        = _mm256_cmpeq_epi8(old_v, new_v);
+        const std::uint32_t equalMask = _mm256_movemask_epi8(cmpEqual);
+        sameBB |= static_cast<Bitboard>(equalMask) << i;
     }
-    return ~same_bb;
+    return ~sameBB;
 #else
     Bitboard changed = 0;
+
     for (Square sq = SQUARE_ZERO; sq < SQUARE_NB; ++sq)
-    {
-        changed |= static_cast<Bitboard>(old[sq] != new_[sq]) << sq;
-    }
+        changed |= static_cast<Bitboard>(oldPieces[sq] != newPieces[sq]) << sq;
+
     return changed;
 #endif
 }
@@ -652,18 +672,18 @@ void update_accumulator_refresh_cache(const FeatureTransformer<Dimensions>& feat
     auto&                    entry = cache[ksq][Perspective];
     PSQFeatureSet::IndexList removed, added;
 
-    const Bitboard changed_bb = get_changed_pieces(entry.pieces, pos.piece_array().data());
-    Bitboard       removed_bb = changed_bb & entry.pieceBB;
-    Bitboard       added_bb   = changed_bb & pos.pieces();
+    const Bitboard changedBB = get_changed_pieces(entry.pieces, pos.piece_array().data());
+    Bitboard       removedBB = changedBB & entry.pieceBB;
+    Bitboard       addedBB   = changedBB & pos.pieces();
 
-    while (removed_bb)
+    while (removedBB)
     {
-        Square sq = pop_lsb(removed_bb);
+        Square sq = pop_lsb(removedBB);
         removed.push_back(PSQFeatureSet::make_index<Perspective>(sq, entry.pieces[sq], ksq));
     }
-    while (added_bb)
+    while (addedBB)
     {
-        Square sq = pop_lsb(added_bb);
+        Square sq = pop_lsb(addedBB);
         added.push_back(PSQFeatureSet::make_index<Perspective>(sq, pos.piece_on(sq), ksq));
     }
 
