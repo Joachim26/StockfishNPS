@@ -837,11 +837,11 @@ class FeatureTransformer {
     if (oldest_computed) {
         std::cout << "DEBUG ACCUCACHE: Cache HIT for "
                   << (Perspective == WHITE ? "WHITE" : "BLACK")
-                  << Stockfish::sync_endl;
+                  << sync_endl;
     } else {
         std::cout << "DEBUG ACCUCACHE: Cache MISS (refresh needed) for "
                   << (Perspective == WHITE ? "WHITE" : "BLACK")
-                  << Stockfish::sync_endl;
+                  << sync_endl;
     }
 // Debug end
 
