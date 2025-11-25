@@ -841,6 +841,19 @@ class FeatureTransformer {
 
         auto [oldest_st, next] = try_find_computed_accumulator<Perspective>(pos);
 
+
+// Debug begin
+    if (next != oldest_st) {
+        std::cout << "DEBUG ACCUCACHE: Cache HIT für " 
+                  << (Perspective == WHITE ? "WHITE" : "BLACK") 
+                  << Stockfish::sync_endl;
+    } else {
+        std::cout << "DEBUG ACCUCACHE: Cache MISS (Neuberechnung) für "
+                  << (Perspective == WHITE ? "WHITE" : "BLACK")
+                  << Stockfish::sync_endl;
+    }
+// Debug end
+
         if ((oldest_st->*accPtr).computed[Perspective])
         {
             if (next == nullptr)
