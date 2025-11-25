@@ -249,7 +249,6 @@ class FeatureTransformer {
         tmp0 = v[6], tmp1 = v[7];
         v[6] = v[12], v[7] = v[13];
         v[12] = v[10], v[13] = v[11];
-        v[10] = tmp0, v[11] = tmp1;
 #elif defined(USE_AVX2)  // Inverse _mm256_packs_epi16 ordering
         std::swap(v[2], v[4]);
         std::swap(v[3], v[5]);
@@ -510,8 +509,8 @@ class FeatureTransformer {
 
             auto accPsqtIn =
               reinterpret_cast<const psqt_vec_t*>(&(st->*accPtr).psqtAccumulation[Perspective][0]);
-            auto accPsqtOut = reinterpret_cast<psqt_vec_t*>(
-              &(states_to_update[0]->*accPtr).psqtAccumulation[Perspective][0]);
+            auto accPsqtOut = reinterpret_cast<psqt_vec_t*>
+              (&(states_to_update[0]->*accPtr).psqtAccumulation[Perspective][0]);
 
             const IndexType offsetPsqtR0 = PSQTBuckets * removed[0][0];
             auto columnPsqtR0 = reinterpret_cast<const psqt_vec_t*>(&psqtWeights[offsetPsqtR0]);
@@ -542,8 +541,7 @@ class FeatureTransformer {
             for (IndexType j = 0; j < HalfDimensions / TileHeight; ++j)
             {
                 // Load accumulator
-                auto accTileIn = reinterpret_cast<const vec_t*>(
-                  &(st->*accPtr).accumulation[Perspective][j * TileHeight]);
+                auto accTileIn = reinterpret_cast<const vec_t*>(&(st->*accPtr).accumulation[Perspective][j * TileHeight]);
                 for (IndexType k = 0; k < NumRegs; ++k)
                     acc[k] = vec_load(&accTileIn[k]);
 
@@ -568,8 +566,7 @@ class FeatureTransformer {
                     }
 
                     // Store accumulator
-                    auto accTileOut = reinterpret_cast<vec_t*>(
-                      &(states_to_update[i]->*accPtr).accumulation[Perspective][j * TileHeight]);
+                    auto accTileOut = reinterpret_cast<vec_t*>(&(states_to_update[i]->*accPtr).accumulation[Perspective][j * TileHeight]);
                     for (IndexType k = 0; k < NumRegs; ++k)
                         vec_store(&accTileOut[k], acc[k]);
                 }
@@ -578,8 +575,7 @@ class FeatureTransformer {
             for (IndexType j = 0; j < PSQTBuckets / PsqtTileHeight; ++j)
             {
                 // Load accumulator
-                auto accTilePsqtIn = reinterpret_cast<const psqt_vec_t*>(
-                  &(st->*accPtr).psqtAccumulation[Perspective][j * PsqtTileHeight]);
+                auto accTilePsqtIn = reinterpret_cast<const psqt_vec_t*>(&(st->*accPtr).psqtAccumulation[Perspective][j * PsqtTileHeight]);
                 for (std::size_t k = 0; k < NumPsqtRegs; ++k)
                     psqt[k] = vec_load_psqt(&accTilePsqtIn[k]);
 
@@ -604,8 +600,7 @@ class FeatureTransformer {
                     }
 
                     // Store accumulator
-                    auto accTilePsqtOut = reinterpret_cast<psqt_vec_t*>(
-                      &(states_to_update[i]->*accPtr)
+                    auto accTilePsqtOut = reinterpret_cast<psqt_vec_t*>(&(states_to_update[i]->*accPtr)
                          .psqtAccumulation[Perspective][j * PsqtTileHeight]);
                     for (std::size_t k = 0; k < NumPsqtRegs; ++k)
                         vec_store_psqt(&accTilePsqtOut[k], psqt[k]);
@@ -632,8 +627,7 @@ class FeatureTransformer {
                     (st->*accPtr).accumulation[Perspective][j] -= weights[offset + j];
 
                 for (std::size_t k = 0; k < PSQTBuckets; ++k)
-                    (st->*accPtr).psqtAccumulation[Perspective][k] -=
-                      psqtWeights[index * PSQTBuckets + k];
+                    (st->*accPtr).psqtAccumulation[Perspective][k] -= psqtWeights[index * PSQTBuckets + k];
             }
 
             // Difference calculation for the activated features
@@ -644,8 +638,7 @@ class FeatureTransformer {
                     (st->*accPtr).accumulation[Perspective][j] += weights[offset + j];
 
                 for (std::size_t k = 0; k < PSQTBuckets; ++k)
-                    (st->*accPtr).psqtAccumulation[Perspective][k] +=
-                      psqtWeights[index * PSQTBuckets + k];
+                    (st->*accPtr).psqtAccumulation[Perspective][k] += psqtWeights[index * PSQTBuckets + k];
             }
         }
 #endif
@@ -739,10 +732,8 @@ class FeatureTransformer {
 
         for (IndexType j = 0; j < PSQTBuckets / PsqtTileHeight; ++j)
         {
-            auto accTilePsqt = reinterpret_cast<psqt_vec_t*>(
-              &accumulator.psqtAccumulation[Perspective][j * PsqtTileHeight]);
-            auto entryTilePsqt =
-              reinterpret_cast<psqt_vec_t*>(&entry.psqtAccumulation[j * PsqtTileHeight]);
+            auto accTilePsqt = reinterpret_cast<psqt_vec_t*>(&(accumulator.psqtAccumulation[Perspective][j * PsqtTileHeight]));
+            auto entryTilePsqt = reinterpret_cast<psqt_vec_t*>(&entry.psqtAccumulation[j * PsqtTileHeight]);
 
             for (std::size_t k = 0; k < NumPsqtRegs; ++k)
                 psqt[k] = entryTilePsqt[k];
@@ -771,9 +762,7 @@ class FeatureTransformer {
             for (std::size_t k = 0; k < NumPsqtRegs; ++k)
                 vec_store_psqt(&accTilePsqt[k], psqt[k]);
         }
-
 #else
-
         for (const auto index : removed)
         {
             const IndexType offset = HalfDimensions * index;
@@ -843,14 +832,16 @@ class FeatureTransformer {
 
 
 // Debug begin
-    if (next != oldest_st) {
-        std::cout << "DEBUG ACCUCACHE: Cache HIT für " 
-                  << (Perspective == WHITE ? "WHITE" : "BLACK") 
-                  << sync_endl;
-    } else {
-        std::cout << "DEBUG ACCUCACHE: Cache MISS (Neuberechnung) für "
+    // Log whether we will do an incremental update (HIT) or a full refresh (MISS).
+    const bool oldest_computed = (oldest_st->*accPtr).computed[Perspective];
+    if (oldest_computed) {
+        std::cout << "DEBUG ACCUCACHE: Cache HIT for "
                   << (Perspective == WHITE ? "WHITE" : "BLACK")
-                  << sync_endl;
+                  << Stockfish::sync_endl;
+    } else {
+        std::cout << "DEBUG ACCUCACHE: Cache MISS (refresh needed) for "
+                  << (Perspective == WHITE ? "WHITE" : "BLACK")
+                  << Stockfish::sync_endl;
     }
 // Debug end
 
