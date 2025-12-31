@@ -32,6 +32,7 @@
 #include <utility>
 
 #include "bitboard.h"
+#include "history.h"
 #include "misc.h"
 #include "movegen.h"
 #include "syzygy/tbprobe.h"
@@ -692,13 +693,14 @@ bool Position::gives_check(Move m) const {
 // to a StateInfo object. The move is assumed to be legal. Pseudo-legal
 // moves should be filtered out before this function is called.
 // If a pointer to the TT table is passed, the entry for the new position
-// will be prefetched
+// will be prefetched, and likewise for shared history.
 void Position::do_move(Move                      m,
                        StateInfo&                newSt,
                        bool                      givesCheck,
                        DirtyPiece&               dp,
                        DirtyThreats&             dts,
-                       const TranspositionTable* tt = nullptr) {
+                       const TranspositionTable* tt      = nullptr,
+                       const SharedHistories*    history = nullptr) {
 
     assert(m.is_ok());
     assert(&newSt != st);
@@ -853,6 +855,7 @@ void Position::do_move(Move                      m,
             k ^= Zobrist::psq[promotion][to];
             st->materialKey ^= Zobrist::psq[promotion][8 + pieceCount[promotion] - 1]
                              ^ Zobrist::psq[pc][8 + pieceCount[pc]];
+            st->nonPawnKey[us] ^= Zobrist::psq[promotion][to];
 
             if (promotionType <= BISHOP)
                 st->minorPieceKey ^= Zobrist::psq[promotion][to];
@@ -879,6 +882,15 @@ void Position::do_move(Move                      m,
     // If en passant is impossible, then k will not change and we can prefetch earlier
     if (tt && !checkEP)
         prefetch(tt->first_entry(adjust_key50(k)));
+
+    if (history)
+    {
+        prefetch(&history->pawn_entry(*this)[pc][to]);
+        prefetch(&history->pawn_correction_entry(*this));
+        prefetch(&history->minor_piece_correction_entry(*this));
+        prefetch(&history->nonpawn_correction_entry<WHITE>(*this));
+        prefetch(&history->nonpawn_correction_entry<BLACK>(*this));
+    }
 
     // Set capture piece
     st->capturedPiece = captured;
@@ -911,7 +923,7 @@ void Position::do_move(Move                      m,
 
         if (more_than_one(pawns))
         {
-            // If there are two pawns potentially being abled to capture and at least one
+            // If there are two pawns potentially being able to capture and at least one
             // is not pinned, ep is legal as there are no horizontal exposed checks
             if (!more_than_one(blockers_for_king(them) & pawns))
             {
@@ -1093,10 +1105,10 @@ void write_multiple_dirties(const Position& p,
 #endif
 
 template<bool PutPiece, bool ComputeRay>
-void Position::update_piece_threats(Piece               pc,
-                                    Square              s,
-                                    DirtyThreats* const dts,
-                                    Bitboard            noRaysContaining) {
+void Position::update_piece_threats(Piece                     pc,
+                                    Square                    s,
+                                    DirtyThreats* const       dts,
+                                    [[maybe_unused]] Bitboard noRaysContaining) const {
     const Bitboard occupied     = pieces();
     const Bitboard rookQueens   = pieces(ROOK, QUEEN);
     const Bitboard bishopQueens = pieces(BISHOP, QUEEN);
@@ -1108,35 +1120,8 @@ void Position::update_piece_threats(Piece               pc,
     const Bitboard rAttacks = attacks_bb<ROOK>(s, occupied);
     const Bitboard bAttacks = attacks_bb<BISHOP>(s, occupied);
 
-    Bitboard qAttacks = Bitboard(0);
-    if constexpr (ComputeRay)
-        qAttacks = rAttacks | bAttacks;
-    else if (type_of(pc) == QUEEN)
-        qAttacks = rAttacks | bAttacks;
-
-    Bitboard threatened;
-
-    switch (type_of(pc))
-    {
-    case PAWN :
-        threatened = PseudoAttacks[color_of(pc)][s];
-        break;
-    case BISHOP :
-        threatened = bAttacks;
-        break;
-    case ROOK :
-        threatened = rAttacks;
-        break;
-    case QUEEN :
-        threatened = qAttacks;
-        break;
-
-    default :
-        threatened = PseudoAttacks[type_of(pc)][s];
-    }
-
-    threatened &= occupied;
-    Bitboard sliders = (rookQueens & rAttacks) | (bishopQueens & bAttacks);
+    Bitboard threatened = attacks_bb(pc, s, occupied) & occupied;
+    Bitboard sliders    = (rookQueens & rAttacks) | (bishopQueens & bAttacks);
     Bitboard incoming_threats =
       (PseudoAttacks[KNIGHT][s] & knights) | (attacks_bb<PAWN>(s, WHITE) & blackPawns)
       | (attacks_bb<PAWN>(s, BLACK) & whitePawns) | (PseudoAttacks[KING][s] & kings);
@@ -1189,7 +1174,7 @@ void Position::update_piece_threats(Piece               pc,
             Piece  slider   = piece_on(sliderSq);
 
             const Bitboard ray        = RayPassBB[sliderSq][s] & ~BetweenBB[sliderSq][s];
-            const Bitboard discovered = ray & qAttacks & occupied;
+            const Bitboard discovered = ray & (rAttacks | bAttacks) & occupied;
 
             assert(!more_than_one(discovered));
             if (discovered && (RayPassBB[sliderSq][s] & noRaysContaining) != noRaysContaining)
@@ -1252,8 +1237,6 @@ void Position::do_castling(Color               us,
     // Remove both pieces first since squares could overlap in Chess960
     remove_piece(Do ? from : to, dts);
     remove_piece(Do ? rfrom : rto, dts);
-    board[Do ? from : to] = board[Do ? rfrom : rto] =
-      NO_PIECE;  // remove_piece does not do this for us
     put_piece(make_piece(us, KING), Do ? to : from, dts);
     put_piece(make_piece(us, ROOK), Do ? rto : rfrom, dts);
 }

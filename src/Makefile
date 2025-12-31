@@ -612,6 +612,8 @@ ifeq ($(COMP),gcc)
 	ifneq ($(gccisclang),)
 		profile_make = clang-profile-make
 		profile_use = clang-profile-use
+	else
+		CXXFLAGS += -Wstack-usage=128000
 	endif
 endif
 
