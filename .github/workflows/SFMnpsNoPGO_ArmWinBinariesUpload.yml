@@ -1,0 +1,63 @@
+name: SFNNv6_avx2Upload
+on:
+  workflow_dispatch:
+jobs:
+  SFnpsArmWinBuilds:
+    name: ${{ matrix.config.name }}
+    runs-on: ${{ matrix.config.os }}
+    env:
+      COMPILER: ${{ matrix.config.compiler }}
+      COMP: ${{ matrix.config.comp }} 
+    strategy:
+      matrix:
+        config:
+          - name: Windows 2022 Mingw-w64 GCC x86_64
+            os: windows-2022
+            compiler: g++
+            comp: mingw
+            run_win11_build: true
+            msys_sys: mingw64
+            msys_env: x86_64-gcc
+            shell: msys2 {0}   
+
+    defaults:
+      run:
+        working-directory: src
+        shell: ${{ matrix.config.shell }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup msys and install required packages
+        if: runner.os == 'Windows'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: ${{ matrix.config.msys_sys }}
+          install: mingw-w64-${{ matrix.config.msys_env }} make git
+
+      - name: Download both networks from the fishtest framework
+        run: |
+            make net
+      - name: win11 build
+        if: ${{ matrix.config.run_win11_build }}
+        run: |
+          make clean
+          make -j3 profile-build ARCH=x86-64-avx2 COMP=$COMP
+          make strip ARCH=x86-64-avx2 COMP=$COMP
+          cp stockfish.exe ../SFNNv6_avx2.exe
+        
+      - uses: xresloader/upload-to-github-Release@v1
+        if: ${{ matrix.config.run_win11_build }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          overwrite: false
+          file: "SFNNv6_avx2.exe"
+          update_latest_release: false
+        
+      - uses: actions/upload-artifact@v4
+        if: ${{ matrix.config.run_win11_build }}
+        with:
+          name: SFNNv6_avx2
+          path: SFNNv6_avx2.exe
