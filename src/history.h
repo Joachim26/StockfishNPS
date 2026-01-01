@@ -1,6 +1,6 @@
 /*
   Stockfish, a UCI chess playing engine derived from Glaurung 2.1
-  Copyright (C) 2004-2025 The Stockfish developers (see AUTHORS file)
+  Copyright (C) 2004-2026 The Stockfish developers (see AUTHORS file)
 
   Stockfish is free software: you can redistribute it and/or modify
   it under the terms of the GNU General Public License as published by
@@ -105,10 +105,10 @@ struct DynStats {
         data = make_unique_large_page<T[]>(size);
     }
     // Sets all values in the range to 0
-    void clear_range(int value, size_t threadIdx) {
-        size_t start = threadIdx * SizeMultiplier;
+    void clear_range(int value, size_t threadIdx, size_t numaTotal) {
+        size_t start = uint64_t(threadIdx) * size / numaTotal;
         assert(start < size);
-        size_t end = std::min(start + SizeMultiplier, size);
+        size_t end = threadIdx + 1 == numaTotal ? size : uint64_t(threadIdx + 1) * size / numaTotal;
 
         while (start < end)
             data[start++].fill(value);
