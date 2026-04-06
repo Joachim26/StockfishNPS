@@ -456,7 +456,7 @@ endif
 ifeq ($(COMP),gcc)
 	comp=gcc
 	CXX=g++
-	CXXFLAGS += -pedantic -Wextra -Wshadow -Wmissing-declarations -flax-vector-conversions -Wstack-usage=128000
+	CXXFLAGS += -pedantic -Wextra -Wshadow -Wmissing-declarations -flax-vector-conversions -Wstack-usage=128000 -fno-ipa-cp-clone
 
 	ifeq ($(arch),$(filter $(arch),armv7 armv8 riscv64))
 		ifeq ($(OS),Android)

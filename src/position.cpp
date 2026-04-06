@@ -290,9 +290,9 @@ Position::set(const string& fenStr, bool isChess960, StateInfo* si) {
     const int wAdditionalQueens  = std::max((int) count<QUEEN>(WHITE) - 1, 0);
     const int bAdditionalQueens  = std::max((int) count<QUEEN>(BLACK) - 1, 0);
     if (wAdditionalKnights + wAdditionalBishops + wAdditionalRooks + wAdditionalQueens > 8 - wPawns)
-        return PositionSetError("Unsupported position. Too many major pieces for WHITE.");
+        return PositionSetError("Unsupported position. Too many pieces for WHITE.");
     if (bAdditionalKnights + bAdditionalBishops + bAdditionalRooks + bAdditionalQueens > 8 - bPawns)
-        return PositionSetError("Unsupported position. Too many major pieces for BLACK.");
+        return PositionSetError("Unsupported position. Too many pieces for BLACK.");
 
     // 2. Active color
     if (!(ss >> token))
@@ -363,7 +363,6 @@ Position::set(const string& fenStr, bool isChess960, StateInfo* si) {
         else if (token >= 'A' && token <= 'H')
         {
             const Square rsqCandidate = make_square(File(token - 'A'), relative_rank(c, RANK_1));
-            ;
             if (piece_on(rsqCandidate) == rook)
                 rsq = rsqCandidate;
 
@@ -1266,8 +1265,25 @@ void Position::update_piece_threats(Piece                     pc,
 
     Bitboard threatened = attacks_bb(pc, s, occupied) & occupiedNoK;
     Bitboard incoming_threats =
-      (PseudoAttacks[KNIGHT][s] & knights) | (attacks_bb<PAWN>(s, WHITE) & blackPawns)
-      | (attacks_bb<PAWN>(s, BLACK) & whitePawns) | (PseudoAttacks[KING][s] & kings);
+      (PseudoAttacks[KNIGHT][s] & knights) | (PseudoAttacks[KING][s] & kings);
+
+    // Compute both incoming and outgoing pawn threats. Incoming pawn pushers are only
+    // added if 'pc' is a pawn.
+    if (type_of(pc) == PAWN)
+    {
+        Bitboard whiteAttacks = PawnPushOrAttacks[WHITE][s];
+        Bitboard blackAttacks = PawnPushOrAttacks[BLACK][s];
+
+        threatened |= (color_of(pc) == WHITE ? whiteAttacks : blackAttacks) & pieces(PAWN);
+
+        incoming_threats |= whiteAttacks & blackPawns;
+        incoming_threats |= blackAttacks & whitePawns;
+    }
+    else
+    {
+        incoming_threats |=
+          (attacks_bb<PAWN>(s, WHITE) & blackPawns) | (attacks_bb<PAWN>(s, BLACK) & whitePawns);
+    }
 
 #ifdef USE_AVX512ICL
     if constexpr (PutPiece)
@@ -1410,7 +1426,7 @@ void Position::undo_null_move() {
 
 
 // Tests if the SEE (Static Exchange Evaluation)
-// value of move is greater or equal to the given threshold. We'll use an
+// value of the move is greater or equal to the given threshold. We'll use an
 // algorithm similar to alpha-beta pruning with a null window.
 bool Position::see_ge(Move m, int threshold) const {
 
