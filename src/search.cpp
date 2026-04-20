@@ -52,6 +52,9 @@
 
 namespace Stockfish {
 
+static constexpr std::array<int, 16> lmrDivisor = {3307, 2930, 2874, 2818, 3215, 3225, 3224, 2782,
+                                                   2858, 2919, 3088, 3275, 3180, 2868, 3006, 3599};
+
 namespace TB = Tablebases;
 
 void syzygy_extend_pv(const OptionsMap&            options,
@@ -82,10 +85,10 @@ int correction_value(const Worker& w, const Position& pos, const Stack* const ss
     const Color us     = pos.side_to_move();
     const auto  m      = (ss - 1)->currentMove;
     const auto& shared = w.sharedHistory;
-    const int   pcv    = shared.pawn_correction_entry(pos).at(us).pawn;
-    const int   micv   = shared.minor_piece_correction_entry(pos).at(us).minor;
-    const int   wnpcv  = shared.nonpawn_correction_entry<WHITE>(pos).at(us).nonPawnWhite;
-    const int   bnpcv  = shared.nonpawn_correction_entry<BLACK>(pos).at(us).nonPawnBlack;
+    const int   pcv    = shared.pawn_correction_entry(pos)[us].pawn;
+    const int   micv   = shared.minor_piece_correction_entry(pos)[us].minor;
+    const int   wnpcv  = shared.nonpawn_correction_entry<WHITE>(pos)[us].nonPawnWhite;
+    const int   bnpcv  = shared.nonpawn_correction_entry<BLACK>(pos)[us].nonPawnBlack;
     const int   cntcv =
       m.is_ok() ? (*(ss - 2)->continuationCorrectionHistory)[pos.piece_on(m.to_sq())][m.to_sq()]
                     + (*(ss - 4)->continuationCorrectionHistory)[pos.piece_on(m.to_sq())][m.to_sq()]
@@ -110,10 +113,10 @@ void update_correction_history(const Position& pos,
     constexpr int nonPawnWeight = 187;
     auto&         shared        = workerThread.sharedHistory;
 
-    shared.pawn_correction_entry(pos).at(us).pawn << bonus;
-    shared.minor_piece_correction_entry(pos).at(us).minor << bonus * 153 / 128;
-    shared.nonpawn_correction_entry<WHITE>(pos).at(us).nonPawnWhite << bonus * nonPawnWeight / 128;
-    shared.nonpawn_correction_entry<BLACK>(pos).at(us).nonPawnBlack << bonus * nonPawnWeight / 128;
+    shared.pawn_correction_entry(pos)[us].pawn << bonus;
+    shared.minor_piece_correction_entry(pos)[us].minor << bonus * 153 / 128;
+    shared.nonpawn_correction_entry<WHITE>(pos)[us].nonPawnWhite << bonus * nonPawnWeight / 128;
+    shared.nonpawn_correction_entry<BLACK>(pos)[us].nonPawnBlack << bonus * nonPawnWeight / 128;
 
     if (m.is_ok())
     {
@@ -896,17 +899,15 @@ Value Search::Worker::search(
 
     // Step 8. Futility pruning: child node
     // The depth condition is important for mate finding.
+    if (!ss->ttPv && depth < 15 && eval >= beta && (!ttData.move || ttCapture) && !is_loss(beta)
+        && !is_win(eval))
     {
-        auto futility_margin = [&](Depth d) {
-            Value futilityMult = 76 - 21 * !ss->ttHit;
+        Value futilityMult   = 76 - 21 * !ss->ttHit;
+        Value futilityMargin = futilityMult * depth
+                             - (2686 * improving + 362 * opponentWorsening) * futilityMult / 1024
+                             + std::abs(correctionValue) / 180600;
 
-            return futilityMult * d
-                 - (2686 * improving + 362 * opponentWorsening) * futilityMult / 1024  //
-                 + std::abs(correctionValue) / 180600;
-        };
-
-        if (!ss->ttPv && depth < 15 && eval - futility_margin(depth) >= beta && eval >= beta
-            && (!ttData.move || ttCapture) && !is_loss(beta) && !is_win(eval))
+        if (eval - futilityMargin >= beta)
             return (2 * beta + eval) / 3;
     }
 
@@ -1102,6 +1103,7 @@ moves_loop:  // When in check, search starts here
             }
             else if (!ss->followPV || !PvNode)
             {
+                int dIndex  = std::min(int(depth), int(lmrDivisor.size())) - 1;
                 int history = (*contHist[0])[movedPiece][move.to_sq()]
                             + (*contHist[1])[movedPiece][move.to_sq()]
                             + sharedHistory.pawn_entry(pos)[movedPiece][move.to_sq()];
@@ -1112,8 +1114,8 @@ moves_loop:  // When in check, search starts here
 
                 history += 71 * mainHistory[us][move.raw()] / 32;
 
-                // (*Scaler): Generally, lower divisors scales well
-                lmrDepth += history / 2995;
+                // (*Scaler): Generally, lower divisors scale well
+                lmrDepth += history / lmrDivisor[dIndex];
 
                 Value futilityValue = ss->staticEval + 42 + 151 * !bestMove + 120 * lmrDepth
                                     + 86 * (ss->staticEval > alpha);
