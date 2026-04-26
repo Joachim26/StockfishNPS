@@ -511,14 +511,14 @@ ifeq ($(COMP),mingw)
 			CXX=i686-w64-mingw32-c++-posix
 		endif
 	endif
-	CXXFLAGS += -pedantic -Wextra -Wshadow -Wmissing-declarations
+	CXXFLAGS += -pedantic -Wextra -Wshadow -Wmissing-declarations -fconstexpr-ops-limit=500000000
 endif
 
 ifeq ($(COMP),icx)
 	comp=icx
 	CXX=icpx
 	CXXFLAGS += --intel -pedantic -Wextra -Wshadow -Wmissing-prototypes \
-		-Wconditional-uninitialized -Wabi -Wdeprecated
+		-Wconditional-uninitialized -Wabi -Wdeprecated -fconstexpr-steps=500000000
 endif
 
 ifeq ($(COMP),clang)
@@ -529,7 +529,7 @@ ifeq ($(COMP),clang)
 	endif
 
 	CXXFLAGS += -pedantic -Wextra -Wshadow -Wmissing-prototypes \
-	            -Wconditional-uninitialized -flax-vector-conversions=none
+	            -Wconditional-uninitialized -flax-vector-conversions=none -fconstexpr-steps=500000000
 
 	ifeq ($(filter $(KERNEL),Darwin OpenBSD FreeBSD),)
 	ifeq ($(target_windows),)
@@ -637,7 +637,7 @@ ifeq ($(COMP),gcc)
 		profile_make = clang-profile-make
 		profile_use = clang-profile-use
 	else
-		CXXFLAGS += -Wstack-usage=128000 -fno-ipa-cp-clone
+		CXXFLAGS += -Wstack-usage=128000 -fno-ipa-cp-clone -fconstexpr-ops-limit=500000000
 	endif
 endif
 
@@ -843,7 +843,7 @@ endif
 ifeq ($(pext),yes)
 	CXXFLAGS += -DUSE_PEXT
 	ifeq ($(comp),$(filter $(comp),gcc clang mingw icx))
-		CXXFLAGS += -mbmi2
+		CXXFLAGS += -mbmi2 -DUSE_COMPTIME_ATTACKS
 	endif
 endif
 
@@ -1048,6 +1048,14 @@ profile-build: net config-sanity objclean profileclean
 	$(MAKE) ARCH=$(ARCH) COMP=$(COMP) profileclean
 endif
 
+ifeq ($(comp), clang)
+LTO_OBJ_SUFFIX := .lto.o
+SAVE_TEMPS := -Wl,--save-temps
+else
+LTO_OBJ_SUFFIX := .ltrans0.ltrans.o
+SAVE_TEMPS := -save-temps
+endif
+
 universal-object-pgo: objclean profileclean universalclean
 	@echo ""
 	@echo "Step 1/4. Building instrumented executable ..."
@@ -1059,14 +1067,14 @@ universal-object-pgo: objclean profileclean universalclean
 	@echo ""
 	@echo "Step 3/4. Building optimized object files ..."
 	$(MAKE) ARCH=$(ARCH) COMP=$(COMP) objclean
-	$(MAKE) ARCH=$(ARCH) COMP=$(COMP) ENV_LDFLAGS='-save-temps $(NNUE_EMBED_OBJ)' $(profile_use)
+	$(MAKE) ARCH=$(ARCH) COMP=$(COMP) ENV_LDFLAGS='$(SAVE_TEMPS) $(NNUE_EMBED_OBJ)' $(profile_use)
 	@echo ""
 	@echo "Step 4/4. Extracting LTO-optimized relocatable object ..."
-	cp $(basename $(EXE)).ltrans0.ltrans.o stockfish.o
+	cp "$(basename $(EXE))$(LTO_OBJ_SUFFIX)" stockfish.o
 
 universal-object-nopgo: objclean universalclean
-	$(MAKE) ARCH=$(ARCH) COMP=$(COMP) ENV_LDFLAGS='-save-temps $(NNUE_EMBED_OBJ)' all
-	cp $(basename $(EXE)).ltrans0.ltrans.o stockfish.o
+	$(MAKE) ARCH=$(ARCH) COMP=$(COMP) ENV_LDFLAGS='$(SAVE_TEMPS) $(NNUE_EMBED_OBJ)' all
+	cp "$(basename $(EXE))$(LTO_OBJ_SUFFIX)" stockfish.o
 
 strip:
 	$(STRIP) $(EXE)
@@ -1265,7 +1273,7 @@ UNIVERSAL_ENTRY_OBJ  := $(TEMP_DIR)/entry_x86.o
 NET_SENTINEL         := $(TEMP_DIR)/.net-done
 
 # Top-level tracked items in src/ (directories and files)
-TRACKED_TOP := $(shell echo "$(SRCS) $(HEADERS) Makefile incbin" | xargs -n1 | awk -F/ '{print $$1}' | sort -u)
+TRACKED_TOP := $(sort $(foreach f,$(SRCS) $(HEADERS) Makefile incbin,$(firstword $(subst /, ,$(f)))))
 
 # Baseline x86-64 must come first in the final link (Windows --allow-multiple-definition
 # uses the first copy of inline duplicates)
@@ -1325,8 +1333,13 @@ $(TEMP_DIR)/%/stockfish.o: $(TEMP_DIR)/%/.setup $(NNUE_EMBED_OBJ) $(NET_SENTINEL
 	    $(MAKE) -C $(TEMP_DIR)/$* $(UOBJ_TGT) \
 	        ARCH=$* CXX=$(CXX) \
 	        NNUE_EMBED_OBJ=$(NNUE_EMBED_OBJ)
+# Drop COMDAT groups; clang LTO leaves them around internalized LOCAL
+# template instantiations which causes problems at the final link
+	objcopy -R .group $@
+# Rename .init_array (Linux) or .ctors (Windows) so we can manually invoke them
 	objcopy --rename-section .init_array=$(call arch-suffix,$*)_init $@
 	objcopy --rename-section .ctors=$(call arch-suffix,$*)_init $@
+# Make the array inert
 	objcopy --set-section-flags $(call arch-suffix,$*)_init=alloc,data $@
 
 $(UNIVERSAL_EXE): $(UNIVERSAL_ENTRY_OBJ) $(NNUE_EMBED_OBJ) $(ARCH_OBJS)
