@@ -171,15 +171,15 @@ Search::Worker::Worker(SharedState&                    sharedState,
     options(sharedState.options),
     threads(sharedState.threads),
     tt(sharedState.tt),
-    networks(sharedState.networks),
-    refreshTable(networks[token]) {
+    network(sharedState.network),
+    refreshTable(network[token]) {
     clear();
 }
 
 void Search::Worker::ensure_network_replicated() {
     // Access once to force lazy initialization.
     // We do this because we want to avoid initialization during search.
-    (void) (networks[numaAccessToken]);
+    (void) (network[numaAccessToken]);
 }
 
 void Search::Worker::start_searching() {
@@ -466,18 +466,17 @@ bool Search::Worker::iterative_deepening() {
 
         if (!threads.stop)
         {
-            completedDepth = rootDepth;
-
             if (lastIterationPV.empty() || rootMoves[0].pv[0] != lastIterationPV[0])
                 lastBestMoveDepth = rootDepth;
 
             lastIterationPV = rootMoves[0].pv;
         }
 
-        // A mated-in/TB-loss score from an aborted search cannot be trusted: the loss
-        // could be delayed or refuted upon exploring the remaining root-moves.
+        // An exact mated-in/TB-loss score from an aborted search cannot be trusted: the
+        // loss could be delayed or refuted upon exploring the remaining root-moves.
         // Thus here we roll back to the score from the previous iteration.
-        else if (!pvIdx && rootMoves[0].score != -VALUE_INFINITE && is_loss(rootMoves[0].score))
+        else if (!pvIdx && rootMoves[0].score != -VALUE_INFINITE && is_loss(rootMoves[0].score)
+                 && !rootMoves[0].scoreLowerbound && !rootMoves[0].scoreUpperbound)
         {
             // Bring the last best move to the front for best thread selection.
             if (!lastIterationPV.empty())
@@ -488,11 +487,11 @@ bool Search::Worker::iterative_deepening() {
                 rootMoves[0].score = rootMoves[0].uciScore = rootMoves[0].previousScore;
 
                 if (mainThread)
-                    uciPvSent = true;
+                    uciPvSent = false;
             }
-            // For an aborted d1 search we label the loss score as inexact.
-            else if (!rootMoves[0].scoreLowerbound)
-                rootMoves[0].scoreUpperbound = true;
+            // For an aborted d1 search we label the loss score as a lower bound.
+            else
+                rootMoves[0].scoreLowerbound = true;
         }
 
         // Have we found a "mate in x" after a completed iteration?
@@ -529,9 +528,9 @@ bool Search::Worker::iterative_deepening() {
             fallingEval = std::clamp(fallingEval, 0.581, 1.655);
 
             // If the bestMove is stable over several iterations, reduce time accordingly
-            timeReduction = std::clamp(
-              interpolate(double(completedDepth - lastBestMoveDepth), 5.0, 18.0, 0.65, 1.55), 0.65,
-              1.55);
+            timeReduction =
+              std::clamp(interpolate(double(rootDepth - lastBestMoveDepth), 5.0, 18.0, 0.65, 1.55),
+                         0.65, 1.55);
 
             double reduction = (1.5 + mainThread->previousTimeReduction) / (2.255 * timeReduction);
 
@@ -645,7 +644,7 @@ void Search::Worker::clear() {
     for (size_t i = 1; i < reductions.size(); ++i)
         reductions[i] = int(2763 / 128.0 * std::log(i));
 
-    refreshTable.clear(networks[numaAccessToken]);
+    refreshTable.clear(network[numaAccessToken]);
 }
 
 
@@ -921,7 +920,9 @@ Value Search::Worker::search(
     if (!ss->ttPv && depth < 15 && eval >= beta && (!ttData.move || ttCapture) && !is_loss(beta)
         && !is_win(eval))
     {
-        Value futilityMult   = 76 - 21 * !ss->ttHit;
+        Value futilityMult = interpolate(std::min(int(depth), 10), 1, 10, 40, 76);
+        futilityMult -= 21 * !ss->ttHit;
+
         Value futilityMargin = futilityMult * depth
                              - (2686 * improving + 362 * opponentWorsening) * futilityMult / 1024
                              + std::abs(correctionValue) / 180600;
@@ -1201,7 +1202,7 @@ moves_loop:  // When in check, search starts here
             // subtree by returning a softbound.
             else if (value >= beta && !is_decisive(value))
             {
-                ttMoveHistory << std::max(-424 - 107 * depth, -3375);
+                ttMoveHistory << -424 - 107 * depth;
                 return value;
             }
 
@@ -1231,8 +1232,8 @@ moves_loop:  // When in check, search starts here
 
         // Decrease reduction for PvNodes (*Scaler)
         if (ss->ttPv)
-            r -= 2819 + PvNode * 973 + (ttData.value > alpha) * 905
-               + (ttData.depth >= depth) * (935 + cutNode * 959);
+            r -= 2617 + PvNode * 912 + (ttData.value > alpha) * 934
+               + (ttData.depth >= depth) * (988 + cutNode * 889);
 
         r += 691;  // Base reduction offset to compensate for other tweaks
         r -= moveCount * 65;
@@ -1240,7 +1241,7 @@ moves_loop:  // When in check, search starts here
 
         // Increase reduction for cut nodes
         if (cutNode)
-            r += 3611 + 985 * !ttData.move;
+            r += 3274 + 1006 * !ttData.move;
 
         // Increase reduction if ttMove is a capture
         if (ttCapture)
@@ -1251,8 +1252,8 @@ moves_loop:  // When in check, search starts here
             r += 251 + 1124 * ((ss + 1)->cutoffCnt > 2) + 1042 * allNode;
 
         // For first picked move (ttMove) reduce reduction
-        if (move == ttData.move)
-            r -= 2239;
+        else if (move == ttData.move)
+            r = std::max(-10, r - 2016 + 150 * cutNode);
 
         if (capture)
             ss->statScore = 863 * int(PieceValue[pos.captured_piece()]) / 128
@@ -1789,7 +1790,7 @@ TimePoint Search::Worker::elapsed() const {
 TimePoint Search::Worker::elapsed_time() const { return main_manager()->tm.elapsed_time(); }
 
 Value Search::Worker::evaluate(const Position& pos) {
-    return Eval::evaluate(networks[numaAccessToken], pos, accumulatorStack, refreshTable,
+    return Eval::evaluate(network[numaAccessToken], pos, accumulatorStack, refreshTable,
                           optimism[pos.side_to_move()]);
 }
 
@@ -2146,31 +2147,29 @@ void SearchManager::pv(Search::Worker&           worker,
     const auto nodes     = threads.nodes_searched();
     auto&      rootMoves = worker.rootMoves;
     auto&      pos       = worker.rootPos;
-    size_t     pvIdx     = worker.pvIdx;
     size_t     multiPV   = std::min(size_t(worker.options["MultiPV"]), rootMoves.size());
     uint64_t   tbHits    = threads.tb_hits() + (worker.tbConfig.rootInTB ? rootMoves.size() : 0);
 
     for (size_t i = 0; i < multiPV; ++i)
     {
-        bool updated = rootMoves[i].score != -VALUE_INFINITE;
+        bool usePreviousScore = rootMoves[i].score == -VALUE_INFINITE;
 
-        if (depth == 1 && !updated && i > 0)
+        if (depth == 1 && usePreviousScore && i > 0)
             continue;
 
-        Depth d = updated ? depth : std::max(1, depth - 1);
-        Value v = updated ? rootMoves[i].uciScore : rootMoves[i].previousScore;
+        Depth d = usePreviousScore ? std::max(1, depth - 1) : depth;
+        Value v = usePreviousScore ? rootMoves[i].previousScore : rootMoves[i].uciScore;
 
         if (v == -VALUE_INFINITE)
             v = VALUE_ZERO;
 
-        bool tb = worker.tbConfig.rootInTB && std::abs(v) <= VALUE_TB;
-        v       = tb ? rootMoves[i].tbScore : v;
+        bool isTBScore = worker.tbConfig.rootInTB && std::abs(v) <= VALUE_TB;
+        v              = isTBScore ? rootMoves[i].tbScore : v;
 
-        bool isExact = i != pvIdx || tb || !updated;  // tablebase- and previous-scores are exact
-
-        // Potentially correct and extend the PV, and in exceptional cases v
+        // Potentially correct and extend the PV, and in exceptional cases v.
+        // Bound flags indicate an unreliable PV, also when we usePreviousScore.
         if (is_decisive(v) && std::abs(v) < VALUE_MATE_IN_MAX_PLY
-            && ((!rootMoves[i].scoreLowerbound && !rootMoves[i].scoreUpperbound) || isExact))
+            && ((!rootMoves[i].scoreLowerbound && !rootMoves[i].scoreUpperbound) || isTBScore))
             syzygy_extend_pv(worker.options, worker.limits, pos, rootMoves[i], v);
 
         std::string pv;
@@ -2194,7 +2193,8 @@ void SearchManager::pv(Search::Worker&           worker,
         info.score    = {v, pos};
         info.wdl      = wdl;
 
-        if (!isExact)
+        // TB and previous scores are exact, even though their bound flags may say otherwise.
+        if (!(isTBScore || usePreviousScore))
             info.bound = bound;
 
         TimePoint time = std::max(TimePoint(1), tm.elapsed_time());

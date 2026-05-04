@@ -175,22 +175,22 @@ struct LimitsType {
 // The UCI stores the uci options, thread pool, and transposition table.
 // This struct is used to easily forward data to the Search::Worker class.
 struct SharedState {
-    SharedState(const OptionsMap&                                         optionsMap,
-                ThreadPool&                                               threadPool,
-                TranspositionTable&                                       transpositionTable,
-                std::map<NumaIndex, SharedHistories>&                     sharedHists,
-                const LazyNumaReplicatedSystemWide<Eval::NNUE::Networks>& nets) :
+    SharedState(const OptionsMap&                                        optionsMap,
+                ThreadPool&                                              threadPool,
+                TranspositionTable&                                      transpositionTable,
+                std::map<NumaIndex, SharedHistories>&                    sharedHists,
+                const LazyNumaReplicatedSystemWide<Eval::NNUE::Network>& net) :
         options(optionsMap),
         threads(threadPool),
         tt(transpositionTable),
         sharedHistories(sharedHists),
-        networks(nets) {}
+        network(net) {}
 
-    const OptionsMap&                                         options;
-    ThreadPool&                                               threads;
-    TranspositionTable&                                       tt;
-    std::map<NumaIndex, SharedHistories>&                     sharedHistories;
-    const LazyNumaReplicatedSystemWide<Eval::NNUE::Networks>& networks;
+    const OptionsMap&                                        options;
+    ThreadPool&                                              threads;
+    TranspositionTable&                                      tt;
+    std::map<NumaIndex, SharedHistories>&                    sharedHistories;
+    const LazyNumaReplicatedSystemWide<Eval::NNUE::Network>& network;
 };
 
 class Worker;
@@ -380,7 +380,7 @@ class Worker {
     Position  rootPos;
     StateInfo rootState;
     RootMoves rootMoves;
-    Depth     rootDepth, completedDepth;
+    Depth     rootDepth;
     Value     rootDelta;
 
     PVMoves lastIterationPV;
@@ -396,10 +396,10 @@ class Worker {
 
     Tablebases::Config tbConfig;
 
-    const OptionsMap&                                         options;
-    ThreadPool&                                               threads;
-    TranspositionTable&                                       tt;
-    const LazyNumaReplicatedSystemWide<Eval::NNUE::Networks>& networks;
+    const OptionsMap&                                        options;
+    ThreadPool&                                              threads;
+    TranspositionTable&                                      tt;
+    const LazyNumaReplicatedSystemWide<Eval::NNUE::Network>& network;
 
     // Used by NNUE
     Eval::NNUE::AccumulatorStack  accumulatorStack;

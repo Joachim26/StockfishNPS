@@ -31,6 +31,11 @@
 
 #include "types.h"
 
+#ifdef __aarch64__
+    #include <arm_acle.h>
+    #define USE_HYPERBOLA_QUINT
+#endif
+
 namespace Stockfish {
 
 namespace Bitboards {
@@ -74,41 +79,64 @@ extern Bitboard BetweenBB[SQUARE_NB][SQUARE_NB];
 extern Bitboard LineBB[SQUARE_NB][SQUARE_NB];
 extern Bitboard RayPassBB[SQUARE_NB][SQUARE_NB];
 
+#ifdef USE_HYPERBOLA_QUINT
+// Hyperbola quintessence implementation for ARM, thanks to the availability of an
+// efficient bit reversal instruction.
+// See https://www.chessprogramming.org/Hyperbola_Quintessence
+struct Magic {
+    // For rooks: file attacks, rank attacks. For bishops: diagonal/antidiagonal
+    Bitboard mask1, mask2;
+    // Precomputed 2 * square_bb(sq), 2 * reverse(square_bb(sq))
+    Bitboard r, rr;
+
+    Bitboard hyperbola(Bitboard occupied, Bitboard mask) const {
+        Bitboard o   = occupied & mask;
+        Bitboard fwd = o - r;
+        Bitboard rev = __rbitll(o) - rr;
+        return (fwd ^ __rbitll(rev)) & mask;
+    }
+
+    Bitboard attacks_bb(Bitboard occupied) const {
+        return hyperbola(occupied, mask1) | hyperbola(occupied, mask2);
+    }
+};
+#else
 // Magic holds all magic bitboards relevant data for a single square
 struct Magic {
     Bitboard mask;
-#ifdef USE_PEXT
+    #ifdef USE_PEXT
     uint16_t* attacks;
     Bitboard  pseudoAttacks;
-#else
+    #else
     Bitboard* attacks;
     Bitboard  magic;
     unsigned  shift;
-#endif
+    #endif
 
     // Compute the attack's index using the 'magic bitboards' approach
     unsigned index(Bitboard occupied) const {
 
-#ifdef USE_PEXT
+    #ifdef USE_PEXT
         return unsigned(pext(occupied, mask));
-#else
+    #else
         if (Is64Bit)
             return unsigned(((occupied & mask) * magic) >> shift);
 
         unsigned lo = unsigned(occupied) & unsigned(mask);
         unsigned hi = unsigned(occupied >> 32) & unsigned(mask >> 32);
         return (lo * unsigned(magic) ^ hi * unsigned(magic >> 32)) >> shift;
-#endif
+    #endif
     }
 
     Bitboard attacks_bb(Bitboard occupied) const {
-#ifdef USE_PEXT
+    #ifdef USE_PEXT
         return pdep(attacks[index(occupied)], pseudoAttacks);
-#else
+    #else
         return attacks[index(occupied)];
-#endif
+    #endif
     }
 };
+#endif
 
 extern Magic Magics[SQUARE_NB][2];
 
@@ -251,6 +279,17 @@ inline int popcount(Bitboard b) {
     return __builtin_popcountll(b);
 
 #endif
+}
+
+inline constexpr int lsb_index64[64] = {
+  0,  47, 1,  56, 48, 27, 2,  60, 57, 49, 41, 37, 28, 16, 3,  61, 54, 58, 35, 52, 50, 42,
+  21, 44, 38, 32, 29, 23, 17, 11, 4,  62, 46, 55, 26, 59, 40, 36, 15, 53, 34, 51, 20, 43,
+  31, 22, 10, 45, 25, 39, 14, 33, 19, 30, 9,  24, 13, 18, 8,  12, 7,  6,  5,  63};
+
+constexpr int constexpr_lsb(uint64_t bb) {
+    assert(bb != 0);
+    constexpr uint64_t debruijn64 = 0x03F79D71B4CB0A89ULL;
+    return lsb_index64[((bb ^ (bb - 1)) * debruijn64) >> 58];
 }
 
 // Returns the least significant bit in a non-zero bitboard.

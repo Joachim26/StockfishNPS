@@ -62,6 +62,39 @@ std::string Bitboards::pretty(Bitboard b) {
     return s;
 }
 
+#ifdef USE_HYPERBOLA_QUINT
+static Bitboard line_mask(Square sq, Direction d1, Direction d2) {
+    Bitboard mask = 0, dest;
+    for (Direction d : {d1, d2})
+    {
+        Square s = sq;
+        while ((dest = Bitboards::safe_destination(s, d)))
+        {
+            mask |= dest;
+            s += d;
+        }
+    }
+    return mask;
+}
+
+static void init_magics(Magic magics[][2]) {
+    for (Square s = SQ_A1; s <= SQ_H8; ++s)
+    {
+        Magic& rook = magics[s][ROOK - BISHOP];
+        rook.mask1  = line_mask(s, NORTH, SOUTH);
+        rook.mask2  = line_mask(s, EAST, WEST);
+
+        Magic& bishop = magics[s][BISHOP - BISHOP];
+        bishop.mask1  = line_mask(s, NORTH_EAST, SOUTH_WEST);
+        bishop.mask2  = line_mask(s, NORTH_WEST, SOUTH_EAST);
+
+        rook.r = bishop.r = square_bb(s) * 2;
+        rook.rr = bishop.rr = square_bb(Square(63 - int(s))) * 2;
+    }
+}
+
+#else
+
 namespace {
 [[maybe_unused]] constexpr Bitboard constexpr_pext(Bitboard b, Bitboard m) {
     Bitboard result = 0, bit = 0;
@@ -74,23 +107,23 @@ namespace {
     return result;
 }
 
-// Computes all rook and bishop attacks at startup or optionally, compile time. Magic
-// bitboards are used to look up attacks of sliding pieces. As a reference see
-// https://www.chessprogramming.org/Magic_Bitboards. In particular, here we use
-// the so called "fancy" approach.
-#ifdef USE_COMPTIME_ATTACKS
+    // Computes all rook and bishop attacks at startup or optionally, compile time. Magic
+    // bitboards are used to look up attacks of sliding pieces. As a reference see
+    // https://www.chessprogramming.org/Magic_Bitboards. In particular, here we use
+    // the so called "fancy" approach.
+    #ifdef USE_COMPTIME_ATTACKS
 constexpr
-#endif
+    #endif
   void
   init_magics(PieceType             pt,
               MagicMask             table[],
               Magic                 magics[][2],
               [[maybe_unused]] bool tableAlreadyInit) {
-#if !defined(USE_COMPTIME_ATTACKS)
+    #if !defined(USE_COMPTIME_ATTACKS)
     tableAlreadyInit = false;
-#endif
+    #endif
 
-#ifndef USE_PEXT
+    #ifndef USE_PEXT
     // Optimal PRNG seeds to pick the correct magics in the shortest time
     int seeds[][RANK_NB] = {{8977, 44560, 54343, 38998, 5731, 95205, 104912, 17020},
                             {728, 10316, 55013, 32803, 12281, 15100, 16645, 255}};
@@ -98,7 +131,7 @@ constexpr
     Bitboard occupancy[4096];
     int      epoch[4096] = {}, cnt = 0;
     Bitboard reference[4096] = {};
-#endif
+    #endif
     int size = 0;
 
     for (Square s = SQ_A1; s <= SQ_H8; ++s)
@@ -114,11 +147,11 @@ constexpr
         Magic&   m       = magics[s][pt - BISHOP];
         Bitboard attacks = Bitboards::sliding_attack(pt, s, 0);
         m.mask           = attacks & ~edges;
-#ifdef USE_PEXT
+    #ifdef USE_PEXT
         m.pseudoAttacks = attacks;
-#else
+    #else
         m.shift = (Is64Bit ? 64 : 32) - popcount(m.mask);
-#endif
+    #endif
         // Set the offset for the attacks table of the square. We have individual
         // table sizes for each square with "Fancy Magic Bitboards".
         m.attacks = s == SQ_A1 ? table : magics[s - 1][pt - BISHOP].attacks + size;
@@ -130,7 +163,7 @@ constexpr
         [[maybe_unused]] Bitboard prevSliding = -1;
         do
         {
-#ifdef USE_PEXT
+    #ifdef USE_PEXT
             if (!tableAlreadyInit)
             {
                 Bitboard sliding = Bitboards::sliding_attack(pt, s, b);
@@ -138,16 +171,16 @@ constexpr
                   sliding != prevSliding ? constexpr_pext(sliding, attacks) : m.attacks[size - 1];
                 prevSliding = sliding;
             }
-#else
+    #else
             occupancy[size] = b;
             reference[size] = Bitboards::sliding_attack(pt, s, b);
-#endif
+    #endif
 
             size++;
             b = (b - m.mask) & m.mask;
         } while (b);
 
-#ifndef USE_PEXT
+    #ifndef USE_PEXT
         PRNG rng(seeds[Is64Bit][rank_of(s)]);
 
         // Find a magic for square 's' picking up an (almost) random number
@@ -176,11 +209,11 @@ constexpr
                     break;
             }
         }
-#endif
+    #endif
     }
 }
 
-#if defined(USE_COMPTIME_ATTACKS) && defined(USE_PEXT)
+    #if defined(USE_COMPTIME_ATTACKS) && defined(USE_PEXT)
 constexpr auto RookTable = []() {
     std::array<uint16_t, 0x19000> result{};
     Magic                         magics[64][2] = {};
@@ -193,12 +226,13 @@ constexpr auto BishopTable = []() {
     init_magics(BISHOP, result.data(), magics, false);
     return result;
 }();
-#else
+    #else
 std::array<MagicMask, 0x19000> RookTable;
 std::array<MagicMask, 0x1480>  BishopTable;
-#endif
+    #endif
 }
 
+#endif
 
 // Initializes various bitboard tables. It is called at
 // startup and relies on global objects to be already zero-initialized.
@@ -211,8 +245,12 @@ void Bitboards::init() {
         for (Square s2 = SQ_A1; s2 <= SQ_H8; ++s2)
             SquareDistance[s1][s2] = std::max(distance<File>(s1, s2), distance<Rank>(s1, s2));
 
+#ifdef USE_HYPERBOLA_QUINT
+    init_magics(Magics);
+#else
     init_magics(ROOK, const_cast<MagicMask*>(RookTable.data()), Magics, true);
     init_magics(BISHOP, const_cast<MagicMask*>(BishopTable.data()), Magics, true);
+#endif
 
     for (Square s1 = SQ_A1; s1 <= SQ_H8; ++s1)
     {

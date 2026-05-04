@@ -1195,10 +1195,11 @@ void write_multiple_dirties(const Position& p,
 #endif
 
 template<bool ComputeRay>
-void Position::update_piece_threats(Piece                     pc,
-                                    bool                      putPiece,
-                                    Square                    s,
-                                    DirtyThreats* const       dts,
+void Position::update_piece_threats(Piece               pc,
+                                    bool                putPiece,
+                                    Square              s,
+                                    DirtyThreats* const dts,
+                                    // Silence spurious warning on GCC 10
                                     [[maybe_unused]] Bitboard noRaysContaining) const {
     const Bitboard occupied     = pieces();
     const Bitboard rookQueens   = pieces(ROOK, QUEEN);
