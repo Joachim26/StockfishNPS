@@ -25,7 +25,7 @@ jobs:
         working-directory: src
         shell: ${{ matrix.config.shell }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
@@ -47,7 +47,7 @@ jobs:
           make strip ARCH=x86-64-avx2 COMP=$COMP
           cp stockfish.exe ../SFNNv6_avx2.exe
         
-      - uses: xresloader/upload-to-github-Release@v1
+      - uses: xresloader/upload-to-github-Release@v1.6.1
         if: ${{ matrix.config.run_win11_build }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
