@@ -593,6 +593,13 @@ void Search::Worker::do_move(
     // Preferable over fetch_add to avoid locking instructions
     nodes.store(nodes.load(std::memory_order_relaxed) + 1, std::memory_order_relaxed);
 
+    // SFnps Begin - Exact node counting for small search limits
+    if (limits.nodes > 0 && limits.nodes <= 1000 && threads.nodes_searched() >= limits.nodes)
+    {
+        threads.stop = true;
+    }
+    // SFnps End
+
     auto [dirtyPiece, dirtyThreats] = accumulatorStack.push();
     pos.do_move(move, st, givesCheck, dirtyPiece, dirtyThreats, &tt, &sharedHistory);
 
