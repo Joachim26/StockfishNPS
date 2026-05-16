@@ -133,6 +133,8 @@ Engine::Engine(std::optional<std::string> path) :
 
     options.add("UCI_LimitStrength", Option(false));
 
+    options.add("Gemini_API_Key", Option(""));
+
     options.add("UCI_Elo",
                 Option(Stockfish::Search::Skill::LowestElo, Stockfish::Search::Skill::LowestElo,
                        Stockfish::Search::Skill::HighestElo));

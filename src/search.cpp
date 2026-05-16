@@ -26,6 +26,8 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
+#include <cstdio>
+#include <fstream>
 #include <initializer_list>
 #include <iostream>
 #include <list>
@@ -262,6 +264,68 @@ void Search::Worker::start_searching() {
         ponder = UCIEngine::move(bestThread->rootMoves[0].pv[1], rootPos.is_chess960());
 
     auto bestmove = UCIEngine::move(bestThread->rootMoves[0].pv[0], rootPos.is_chess960());
+
+    // --- Gemini integration ---
+    std::string apiKey = options["Gemini_API_Key"];
+    size_t multiPV = size_t(options["MultiPV"]);
+    if (multiPV > 1 && !apiKey.empty() && bestThread->rootMoves.size() >= 2) {
+        int numMoves = std::min(int(multiPV), 4);
+        numMoves = std::min(numMoves, int(bestThread->rootMoves.size()));
+        
+        std::string fen = rootPos.fen();
+        std::string prompt = "Du bist ein menschlicher Schachspieler mit ca. " + std::to_string(int(options["UCI_Elo"])) + " Elo. Betrachte diese FEN-Stellung: " + fen + " und die besten Zuege, die eine Engine vorschlaegt:\\n";
+        
+        for (int i = 0; i < numMoves; ++i) {
+            auto moveStr = UCIEngine::move(bestThread->rootMoves[i].pv[0], rootPos.is_chess960());
+            int scoreCp = int(bestThread->rootMoves[i].uciScore);
+            prompt += "- Zug " + moveStr + " (Score: " + std::to_string(scoreCp) + ")\\n";
+        }
+        
+        prompt += "Welcher dieser Zuege erscheint dir aus menschlicher, strategischer Sicht am natuerlichsten? Antworte NUR mit dem Zug im UCI-Format (z.B. e2e4).";
+        
+        std::string jsonPayload = "{\"contents\":[{\"parts\":[{\"text\": \"" + prompt + "\"}]}]}";
+        
+        std::ofstream temp("gemini_payload.json");
+        temp << jsonPayload;
+        temp.close();
+        
+        std::string cmd = "curl -s -X POST -H \"Content-Type: application/json\" -d @gemini_payload.json \"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=" + apiKey + "\"";
+        
+        std::string result;
+#ifdef _WIN32
+        FILE* pipe = _popen(cmd.c_str(), "r");
+#else
+        FILE* pipe = popen(cmd.c_str(), "r");
+#endif
+        if (pipe) {
+            char buffer[128];
+            while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
+                result += buffer;
+            }
+#ifdef _WIN32
+            _pclose(pipe);
+#else
+            pclose(pipe);
+#endif
+        }
+        
+        std::string bestGeminiMove = "";
+        for (int i = 0; i < numMoves; ++i) {
+            auto moveStr = UCIEngine::move(bestThread->rootMoves[i].pv[0], rootPos.is_chess960());
+            if (result.find(moveStr) != std::string::npos) {
+                bestGeminiMove = moveStr;
+                break;
+            }
+        }
+        if (!bestGeminiMove.empty()) {
+            bestmove = bestGeminiMove;
+            ponder = ""; // reset ponder
+        }
+        
+        std::remove("gemini_payload.json");
+    }
+    // --- End Gemini integration ---
+
     main_manager()->updates.onBestmove(bestmove, ponder);
 }
 
