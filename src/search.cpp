@@ -320,6 +320,9 @@ void Search::Worker::start_searching() {
         if (!bestGeminiMove.empty()) {
             bestmove = bestGeminiMove;
             ponder = ""; // reset ponder
+            sync_cout << "info string Gemini waehlte Zug: " << bestmove << sync_endl;
+        } else {
+            sync_cout << "info string Gemini API Fehler oder kein gueltiger Zug gefunden." << sync_endl;
         }
         
         std::remove("gemini_payload.json");
