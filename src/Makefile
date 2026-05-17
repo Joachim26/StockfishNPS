@@ -79,7 +79,7 @@ SRCS = benchmark.cpp bitboard.cpp evaluate.cpp main.cpp \
 	nnue/features/half_ka_v2_hm.cpp nnue/features/full_threats.cpp \
 	engine.cpp score.cpp memory.cpp
 
-OTHER_SRCS = universal/entry_x86.cpp universal/nnue_embed.cpp
+OTHER_SRCS = universal/entry_x86.cpp universal/entry_arm64.cpp universal/nnue_embed.cpp
 
 HEADERS = benchmark.h bitboard.h evaluate.h misc.h movegen.h movepick.h history.h \
 		nnue/nnue_misc.h nnue/features/half_ka_v2_hm.h nnue/features/full_threats.h \
@@ -153,14 +153,14 @@ ifeq ($(ARCH), $(filter $(ARCH), \
                  x86-64-universal x86-64-avx512icl x86-64-vnni512 x86-64-avx512 x86-64-avxvnni \
                  x86-64-bmi2 x86-64-avx2 x86-64-sse41-popcnt x86-64-modern x86-64-ssse3 x86-64-sse3-popcnt \
                  x86-64 x86-32-sse41-popcnt x86-32-sse2 x86-32 ppc-64 ppc-64-altivec ppc-64-vsx ppc-32 e2k \
-                 armv7 armv7-neon armv8 armv8-dotprod apple-silicon general-64 general-32 riscv64 \
+                 armv7 armv7-neon armv8 armv8-dotprod armv8-universal apple-silicon general-64 general-32 riscv64 \
                  loongarch64 loongarch64-lsx loongarch64-lasx))
    SUPPORTED_ARCH=true
 else
    SUPPORTED_ARCH=false
 endif
 
-ifeq ($(ARCH), x86-64-universal)
+ifneq (,$(findstring universal,$(ARCH)))
    UNIVERSAL_BUILD=true
 else
    UNIVERSAL_BUILD=false
@@ -828,12 +828,14 @@ ifeq ($(dotprod),yes)
 endif
 
 ifeq ($(lasx),yes)
+	CXXFLAGS += -DUSE_LASX
 	ifeq ($(comp),$(filter $(comp),gcc clang mingw icx))
 		CXXFLAGS += -mlasx
 	endif
 endif
 
 ifeq ($(lsx),yes)
+	CXXFLAGS += -DUSE_LSX
 	ifeq ($(comp),$(filter $(comp),gcc clang mingw icx))
 		CXXFLAGS += -mlsx
 	endif
@@ -979,6 +981,7 @@ help:
 	echo "ppc-32                  > PPC 32-bit" && \
 	echo "armv7                   > ARMv7 32-bit" && \
 	echo "armv7-neon              > ARMv7 32-bit with popcnt and neon" && \
+	echo "armv8-universal         > ARMv8 64-bit with automatic runtime selection of the best architecture" && \
 	echo "armv8                   > ARMv8 64-bit with popcnt and neon" && \
 	echo "armv8-dotprod           > ARMv8 64-bit with popcnt, neon and dot product support" && \
 	echo "e2k                     > Elbrus 2000" && \
@@ -1049,12 +1052,23 @@ profile-build: net config-sanity objclean profileclean
 endif
 
 ifeq ($(comp), clang)
-LTO_OBJ_SUFFIX := .lto.o
-SAVE_TEMPS := -Wl,--save-temps
+  LTO_OBJ_SUFFIX := .lto.o
+  ifeq ($(target_windows),yes)
+    SAVE_TEMPS := -Wl,--lto-emit-asm  # ld.lld doesn't have a save temps functionality
+    use_lto_emit_asm := yes
+  else
+    SAVE_TEMPS := -Wl,--save-temps
+  endif
 else
-LTO_OBJ_SUFFIX := .ltrans0.ltrans.o
-SAVE_TEMPS := -save-temps
+  LTO_OBJ_SUFFIX := .ltrans0.ltrans.o
+  SAVE_TEMPS     := -save-temps
 endif
+
+ifeq ($(arch),armv8)
+  ASM_FLAGS := -mcpu=neoverse-v2
+endif
+
+MODNAME := $(subst -,_,$(notdir $(CURDIR)))
 
 universal-object-pgo: objclean profileclean universalclean
 	@echo ""
@@ -1069,12 +1083,25 @@ universal-object-pgo: objclean profileclean universalclean
 	$(MAKE) ARCH=$(ARCH) COMP=$(COMP) objclean
 	$(MAKE) ARCH=$(ARCH) COMP=$(COMP) ENV_LDFLAGS='$(SAVE_TEMPS) $(NNUE_EMBED_OBJ)' $(profile_use)
 	@echo ""
+ifeq ($(use_lto_emit_asm),yes)
+	@echo "Step 4/4. Renaming ctors and extracting LTO-optimized relocatable object ..."
+	awk -v MODNAME=$(MODNAME) -f ../../universal/rewrite_asm_sections.awk *.lto.s > renamed.s
+# -mcpu=neoverse-v2 (or another CPU supporting dotprod) is required for clang
+# to not complain when assembling
+	$(CXX) -c renamed.s -o stockfish.o $(ASM_FLAGS)
+else
 	@echo "Step 4/4. Extracting LTO-optimized relocatable object ..."
 	cp "$(basename $(EXE))$(LTO_OBJ_SUFFIX)" stockfish.o
+endif
 
 universal-object-nopgo: objclean universalclean
 	$(MAKE) ARCH=$(ARCH) COMP=$(COMP) ENV_LDFLAGS='$(SAVE_TEMPS) $(NNUE_EMBED_OBJ)' all
+ifeq ($(use_lto_emit_asm),yes)
+	awk -v MODNAME=$(MODNAME) -f ../../universal/rewrite_asm_sections.awk *.lto.s > renamed.s
+	$(CXX) -c renamed.s -o stockfish.o $(ASM_FLAGS)
+else
 	cp "$(basename $(EXE))$(LTO_OBJ_SUFFIX)" stockfish.o
+endif
 
 strip:
 	$(STRIP) $(EXE)
@@ -1252,39 +1279,62 @@ endif
 # Usage:
 #   make -j ARCH=x86-64-universal build          # non-PGO
 #   make -j ARCH=x86-64-universal profile-build  # PGO (use RUN_PREFIX for intel SDE)
+#   make -j ARCH=armv8-universal build
 
 TEMP_DIR             := $(CURDIR)/temp_builds
 UNIVERSAL_EXE        := $(CURDIR)/$(EXE)
 
 ifeq ($(UNIVERSAL_BUILD),true)
 
-UNIVERSAL_ARCHES := x86-64 x86-64-sse41-popcnt x86-64-avx2 x86-64-bmi2 \
-                    x86-64-avxvnni x86-64-avx512 x86-64-vnni512 x86-64-avx512icl
-
-# GCC 15+ required for #embed
-GCC_MAJOR := $(shell $(CXX) -dumpversion 2>/dev/null | cut -d. -f1)
-ifneq ($(shell test "$(GCC_MAJOR)" -ge 15 2>/dev/null && echo ok),ok)
-$(error Universal build needs GCC 15+ for \#embed support; CXX=$(CXX) reports version '$(GCC_MAJOR)')
+# GCC 15+ or Clang 19+ required for #embed
+CXX_MAJOR    := $(shell $(CXX) -dumpversion 2>/dev/null | cut -d. -f1)
+CXX_IS_CLANG := $(shell $(CXX) --version 2>/dev/null | head -1 | grep -ic clang)
+ifeq ($(CXX_IS_CLANG),0)
+  EMBED_MIN  := 15
+  EMBED_NAME := GCC
+else
+  EMBED_MIN  := 19
+  EMBED_NAME := Clang
+endif
+ifneq ($(shell test "$(CXX_MAJOR)" -ge "$(EMBED_MIN)" 2>/dev/null && echo ok),ok)
+$(error Universal build needs $(EMBED_NAME) $(EMBED_MIN)+ for \#embed support; CXX=$(CXX) reports version '$(CXX_MAJOR)')
 endif
 
 UNIVERSAL_SRC_DIR    := $(CURDIR)/universal
 NNUE_EMBED_OBJ       := $(TEMP_DIR)/nnue_embed.o
-UNIVERSAL_ENTRY_OBJ  := $(TEMP_DIR)/entry_x86.o
 NET_SENTINEL         := $(TEMP_DIR)/.net-done
+
+ifeq ($(arch),x86_64)
+  UNIVERSAL_ARCHES := x86-64 x86-64-sse41-popcnt x86-64-avx2 x86-64-bmi2 \
+                      x86-64-avxvnni x86-64-avx512 x86-64-vnni512 x86-64-avx512icl
+  UNIVERSAL_ENTRY_OBJ  := $(TEMP_DIR)/entry_x86.o
+  UNIVERSAL_ENTRY_SRC  := $(UNIVERSAL_SRC_DIR)/entry_x86.cpp
+  BASELINE_ARCH := x86-64
+else
+  UNIVERSAL_ARCHES := armv8 armv8-dotprod
+  UNIVERSAL_ENTRY_OBJ  := $(TEMP_DIR)/entry_arm64.o
+  UNIVERSAL_ENTRY_SRC  := $(UNIVERSAL_SRC_DIR)/entry_arm64.cpp
+  BASELINE_ARCH := armv8
+endif
 
 # Top-level tracked items in src/ (directories and files)
 TRACKED_TOP := $(sort $(foreach f,$(SRCS) $(HEADERS) Makefile incbin,$(firstword $(subst /, ,$(f)))))
 
-# Baseline x86-64 must come first in the final link (Windows --allow-multiple-definition
+# Baseline build must come first in the final link (Windows --allow-multiple-definition
 # uses the first copy of inline duplicates)
-ARCH_OBJS := $(TEMP_DIR)/x86-64/stockfish.o \
-             $(patsubst %,$(TEMP_DIR)/%/stockfish.o,$(filter-out x86-64,$(UNIVERSAL_ARCHES)))
+ARCH_OBJS := $(TEMP_DIR)/$(BASELINE_ARCH)/stockfish.o \
+             $(patsubst %,$(TEMP_DIR)/%/stockfish.o,$(filter-out $(BASELINE_ARCH),$(UNIVERSAL_ARCHES)))
 
-UNIVERSAL_FINAL_FLAGS := -fno-exceptions -Os -static-libstdc++ -static-libgcc -Wno-c++26-extensions
+UNIVERSAL_FINAL_FLAGS := -fno-exceptions -Os \
+			 -Wno-c++26-extensions -Wno-c23-extensions # suppress #embed warnings
+
 ifeq ($(KERNEL),Linux)
-    UNIVERSAL_FINAL_FLAGS += -lrt -lpthread
-else
-    UNIVERSAL_FINAL_FLAGS += -Wl,--allow-multiple-definition -static
+  UNIVERSAL_FINAL_FLAGS += -static-libstdc++ -static-libgcc -lrt -lpthread
+else    # windows
+  UNIVERSAL_FINAL_FLAGS += -Wl,--allow-multiple-definition -static
+  ifeq ($(COMP),clang)
+    UNIVERSAL_FINAL_FLAGS += -lpthread
+  endif
 endif
 
 # $(call arch-namespace,x86-64-avx2) => Stockfish_x86_64_avx2
@@ -1293,10 +1343,19 @@ arch-namespace  = Stockfish_$(call arch-suffix,$(1))
 # Itanium ABI mangled name for Stockfish_<suffix>::main(int, char**)
 arch-mangled    = _ZN$(shell printf %s '$(call arch-namespace,$(1))' | wc -c)$(call arch-namespace,$(1))4mainEiPPc
 
+# lld-link, used on Windows+clang, doesn't accept --defsym, so
+# we define main directly in main.cpp instead and delete it later.
+ifeq ($(target_windows)+$(COMP),yes+clang)
+  arch-defmain = -DUNIVERSAL_NEEDS_MAIN_SHIM
+else
+  arch-defmain = -Wl,--defsym=main=$(call arch-mangled,$(1))
+endif
+
 arch-cxxflags   = --embed-dir=$(CURDIR) -DStockfish=$(call arch-namespace,$(1)) -DUNIVERSAL_BINARY \
-                  -Wl,--defsym=main=$(call arch-mangled,$(1)) -Wno-c++26-extensions
+                  $(call arch-defmain,$(1)) -Wno-c++26-extensions -Wno-c23-extensions
 
 UOBJ_TGT ?= universal-object-pgo
+OBJCOPY  ?= objcopy
 
 .PHONY: build profile-build universal-clean
 build:         UOBJ_TGT := universal-object-nopgo
@@ -1315,7 +1374,7 @@ $(NET_SENTINEL): | $(TEMP_DIR)
 $(NNUE_EMBED_OBJ): $(UNIVERSAL_SRC_DIR)/nnue_embed.cpp $(NET_SENTINEL) | $(TEMP_DIR)
 	$(CXX) -O2 -Wno-c++26-extensions --embed-dir=$(CURDIR) -c $< -o $@
 
-$(UNIVERSAL_ENTRY_OBJ): $(UNIVERSAL_SRC_DIR)/entry_x86.cpp | $(TEMP_DIR)
+$(UNIVERSAL_ENTRY_OBJ): $(UNIVERSAL_ENTRY_SRC) | $(TEMP_DIR)
 	$(CXX) -O2 -c $< -o $@
 
 # Symlink tracked top-level items from src/ into temp_builds/<arch>/.
@@ -1335,12 +1394,17 @@ $(TEMP_DIR)/%/stockfish.o: $(TEMP_DIR)/%/.setup $(NNUE_EMBED_OBJ) $(NET_SENTINEL
 	        NNUE_EMBED_OBJ=$(NNUE_EMBED_OBJ)
 # Drop COMDAT groups; clang LTO leaves them around internalized LOCAL
 # template instantiations which causes problems at the final link
-	objcopy -R .group $@
+	$(OBJCOPY) -R .group $@
+ifeq ($(use_lto_emit_asm),yes)
+# Delete per-arch main shim
+	$(OBJCOPY) -N main $@
+else
 # Rename .init_array (Linux) or .ctors (Windows) so we can manually invoke them
-	objcopy --rename-section .init_array=$(call arch-suffix,$*)_init $@
-	objcopy --rename-section .ctors=$(call arch-suffix,$*)_init $@
+	$(OBJCOPY) --rename-section .init_array=$(call arch-suffix,$*)_init $@
+	$(OBJCOPY) --rename-section .ctors=$(call arch-suffix,$*)_init $@
 # Make the array inert
-	objcopy --set-section-flags $(call arch-suffix,$*)_init=alloc,data $@
+	$(OBJCOPY) --set-section-flags $(call arch-suffix,$*)_init=alloc,data $@
+endif
 
 $(UNIVERSAL_EXE): $(UNIVERSAL_ENTRY_OBJ) $(NNUE_EMBED_OBJ) $(ARCH_OBJS)
 	$(CXX) -o $@ $(UNIVERSAL_ENTRY_OBJ) $(NNUE_EMBED_OBJ) $(ARCH_OBJS) $(UNIVERSAL_FINAL_FLAGS)

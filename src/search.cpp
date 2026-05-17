@@ -344,8 +344,9 @@ bool Search::Worker::iterative_deepening() {
     Depth lastBestMoveDepth = 0;
 
     Value  alpha, beta;
-    Value  bestValue     = -VALUE_INFINITE;
-    Color  us            = rootPos.side_to_move();
+    Value  bestValue          = -VALUE_INFINITE;
+    Value  lastIterationScore = -VALUE_INFINITE;
+    Color  us                 = rootPos.side_to_move();
     double timeReduction = 1, totBestMoveChanges = 0;
     int    delta, iterIdx                        = 0;
 
@@ -533,33 +534,48 @@ bool Search::Worker::iterative_deepening() {
                 break;
         }
 
+        const bool forgottenMate = lastIterationScore != -VALUE_INFINITE
+                                && is_mate_or_mated(lastIterationScore)
+                                && (std::abs(rootMoves[0].score) < std::abs(lastIterationScore)
+                                    || rootMoves[0].score_is_bound());
+
         if (!threads.stop)
         {
             if (lastIterationPV.empty() || rootMoves[0].pv[0] != lastIterationPV[0])
                 lastBestMoveDepth = rootDepth;
 
-            lastIterationPV = rootMoves[0].pv;
+            // Do not replace (shorter) mate scores from a previous iteration.
+            if (!forgottenMate)
+            {
+                lastIterationPV    = rootMoves[0].pv;
+                lastIterationScore = rootMoves[0].score;
+            }
         }
+
+        const bool abortedLossSearch =
+          threads.stop && !pvIdx && rootMoves[0].score != -VALUE_INFINITE
+          && is_loss(rootMoves[0].score) && !rootMoves[0].score_is_bound();
 
         // An exact mated-in/TB-loss score from an aborted search cannot be trusted: the
         // loss could be delayed or refuted upon exploring the remaining root-moves.
         // Thus here we roll back to the score from the previous iteration.
-        else if (!pvIdx && rootMoves[0].score != -VALUE_INFINITE && is_loss(rootMoves[0].score)
-                 && !rootMoves[0].score_is_bound())
+        // We do the same if a search has failed to recover a mate score that was found
+        // in a previous iteration.
+        if (abortedLossSearch || (rootMoves[0].score != -VALUE_INFINITE && forgottenMate))
         {
-            // Bring the last best move to the front for best thread selection.
             if (!lastIterationPV.empty())
             {
                 Utility::move_to_front(rootMoves, [&lastPV = std::as_const(lastIterationPV)](
                                                     const auto& rm) { return rm == lastPV[0]; });
                 rootMoves[0].pv    = lastIterationPV;
-                rootMoves[0].score = rootMoves[0].uciScore = rootMoves[0].previousScore;
+                rootMoves[0].score = rootMoves[0].uciScore = lastIterationScore;
+                rootMoves[0].unset_bound_flags();
 
                 if (mainThread)
                     uciPvSent = false;
             }
             // For an aborted d1 search we label the loss score as a lower bound.
-            else
+            else if (abortedLossSearch)
                 rootMoves[0].scoreLowerbound = true;
         }
 
@@ -815,6 +831,8 @@ Value Search::Worker::search(
     ss->statScore       = 0;
     (ss + 2)->cutoffCnt = 0;
 
+    const auto correctionValue = correction_value(*this, pos, ss);
+
     // Step 4. Transposition table lookup
     excludedMove                   = ss->excludedMove;
     posKey                         = pos.key();
@@ -827,8 +845,8 @@ Value Search::Worker::search(
     ttCapture    = ttData.move && pos.capture_stage(ttData.move);
 
     // Step 5. Static evaluation of the position
-    Value      unadjustedStaticEval = VALUE_NONE;
-    const auto correctionValue      = correction_value(*this, pos, ss);
+    Value unadjustedStaticEval = VALUE_NONE;
+
     // Skip early pruning when in check
     if (ss->inCheck)
         ss->staticEval = eval = (ss - 2)->staticEval;
@@ -1329,7 +1347,7 @@ moves_loop:  // When in check, search starts here
 
         // For first picked move (ttMove) reduce reduction
         else if (move == ttData.move)
-            r = std::max(-10, r - 2016 + 150 * cutNode);
+            r -= 2016 + 150 * cutNode;
 
         if (capture)
             ss->statScore = 809 * int(PieceValue[pos.captured_piece()]) / 128
