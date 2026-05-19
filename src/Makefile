@@ -86,7 +86,7 @@ HEADERS = benchmark.h bitboard.h evaluate.h misc.h movegen.h movepick.h history.
 		nnue/layers/affine_transform.h nnue/layers/affine_transform_sparse_input.h \
 		nnue/layers/clipped_relu.h nnue/layers/sqr_clipped_relu.h nnue/nnue_accumulator.h \
 		nnue/nnue_architecture.h nnue/nnue_common.h nnue/nnue_feature_transformer.h nnue/simd.h \
-		position.h search.h syzygy/tbprobe.h thread.h thread_win32_osx.h timeman.h \
+		nnue/nnz_helper.h position.h search.h syzygy/tbprobe.h thread.h thread_win32_osx.h timeman.h \
 		tt.h tune.h types.h uci.h ucioption.h perft.h nnue/network.h engine.h score.h numa.h memory.h shm.h shm_linux.h
 
 OBJS = $(notdir $(SRCS:.cpp=.o))
@@ -377,6 +377,14 @@ ifeq ($(ARCH),armv8-dotprod)
 	arm_version = 8
 endif
 
+ifeq ($(ARCH),armv8-universal)
+	arch = armv8
+	prefetch = yes
+	popcnt = yes
+	neon = yes
+	arm_version = 8
+endif
+
 ifeq ($(ARCH),apple-silicon)
 	arch = arm64
 	prefetch = yes
@@ -594,6 +602,7 @@ ifeq ($(COMP),ndk)
 			STRIP=llvm-strip
 		endif
 	endif
+	OBJCOPY=llvm-objcopy
 	LDFLAGS += -static-libstdc++
 endif
 
@@ -1131,6 +1140,7 @@ profileclean:
 
 universalclean:
 	@rm -rf $(TEMP_DIR)
+	@rm -f universal/network_dump.inc
 
 # evaluation network (nnue)
 net:
@@ -1286,20 +1296,6 @@ UNIVERSAL_EXE        := $(CURDIR)/$(EXE)
 
 ifeq ($(UNIVERSAL_BUILD),true)
 
-# GCC 15+ or Clang 19+ required for #embed
-CXX_MAJOR    := $(shell $(CXX) -dumpversion 2>/dev/null | cut -d. -f1)
-CXX_IS_CLANG := $(shell $(CXX) --version 2>/dev/null | head -1 | grep -ic clang)
-ifeq ($(CXX_IS_CLANG),0)
-  EMBED_MIN  := 15
-  EMBED_NAME := GCC
-else
-  EMBED_MIN  := 19
-  EMBED_NAME := Clang
-endif
-ifneq ($(shell test "$(CXX_MAJOR)" -ge "$(EMBED_MIN)" 2>/dev/null && echo ok),ok)
-$(error Universal build needs $(EMBED_NAME) $(EMBED_MIN)+ for \#embed support; CXX=$(CXX) reports version '$(CXX_MAJOR)')
-endif
-
 UNIVERSAL_SRC_DIR    := $(CURDIR)/universal
 NNUE_EMBED_OBJ       := $(TEMP_DIR)/nnue_embed.o
 NET_SENTINEL         := $(TEMP_DIR)/.net-done
@@ -1329,7 +1325,12 @@ UNIVERSAL_FINAL_FLAGS := -fno-exceptions -Os \
 			 -Wno-c++26-extensions -Wno-c23-extensions # suppress #embed warnings
 
 ifeq ($(KERNEL),Linux)
-  UNIVERSAL_FINAL_FLAGS += -static-libstdc++ -static-libgcc -lrt -lpthread
+  UNIVERSAL_FINAL_FLAGS += -static-libstdc++ -static-libgcc
+  ifeq ($(COMP),ndk)
+    UNIVERSAL_FINAL_FLAGS += -static
+  else
+    UNIVERSAL_FINAL_FLAGS += -lrt -lpthread
+  endif
 else    # windows
   UNIVERSAL_FINAL_FLAGS += -Wl,--allow-multiple-definition -static
   ifeq ($(COMP),clang)
@@ -1351,7 +1352,12 @@ else
   arch-defmain = -Wl,--defsym=main=$(call arch-mangled,$(1))
 endif
 
-arch-cxxflags   = --embed-dir=$(CURDIR) -DStockfish=$(call arch-namespace,$(1)) -DUNIVERSAL_BINARY \
+EMBED_DIR_SUPPORTED := $(shell echo 'int main(){}' | $(CXX) -x c++ --embed-dir=. -o /dev/null -c - 2>/dev/null && echo 1 || echo 0)
+ifeq ($(EMBED_DIR_SUPPORTED),1)
+  EMBED_DIR = --embed-dir=$(CURDIR)
+endif
+
+arch-cxxflags   = $(EMBED_DIR) -DStockfish=$(call arch-namespace,$(1)) -DUNIVERSAL_BINARY \
                   $(call arch-defmain,$(1)) -Wno-c++26-extensions -Wno-c23-extensions
 
 UOBJ_TGT ?= universal-object-pgo
@@ -1368,11 +1374,11 @@ $(TEMP_DIR):
 
 # Download nnue files once in src/ (reused by every sub-arch via --embed-dir).
 $(NET_SENTINEL): | $(TEMP_DIR)
-	@cd $(CURDIR) && $(SHELL) ../scripts/net.sh
+	@cd $(CURDIR) && $(SHELL) ../scripts/net.sh $(EMBED_DIR_SUPPORTED)
 	@touch $@
 
 $(NNUE_EMBED_OBJ): $(UNIVERSAL_SRC_DIR)/nnue_embed.cpp $(NET_SENTINEL) | $(TEMP_DIR)
-	$(CXX) -O2 -Wno-c++26-extensions --embed-dir=$(CURDIR) -c $< -o $@
+	$(CXX) -O2 -Wno-c++26-extensions $(EMBED_DIR) -c $< -o $@
 
 $(UNIVERSAL_ENTRY_OBJ): $(UNIVERSAL_ENTRY_SRC) | $(TEMP_DIR)
 	$(CXX) -O2 -c $< -o $@
@@ -1390,7 +1396,7 @@ $(TEMP_DIR)/%/.setup: | $(TEMP_DIR)
 $(TEMP_DIR)/%/stockfish.o: $(TEMP_DIR)/%/.setup $(NNUE_EMBED_OBJ) $(NET_SENTINEL)
 	+ENV_CXXFLAGS='$(ENV_CXXFLAGS) $(call arch-cxxflags,$*)' \
 	    $(MAKE) -C $(TEMP_DIR)/$* $(UOBJ_TGT) \
-	        ARCH=$* CXX=$(CXX) \
+	        ARCH=$* CXX=$(CXX) COMP=$(COMP) \
 	        NNUE_EMBED_OBJ=$(NNUE_EMBED_OBJ)
 # Drop COMDAT groups; clang LTO leaves them around internalized LOCAL
 # template instantiations which causes problems at the final link

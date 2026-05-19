@@ -35,6 +35,7 @@
 #include "nnue_architecture.h"
 #include "nnue_common.h"
 #include "nnue_misc.h"
+#include "nnz_helper.h"
 
 // Macro to embed the default efficiently updatable neural network (NNUE) file
 // data in the engine binary (using incbin.h, by Dale Weiler).
@@ -50,10 +51,18 @@ INCBIN(EmbeddedNNUE, EvalFileDefaultName);
     // separate, non-LTO nnue_embed.o (with strong symbols) can override them during the LTO link,
     // (INCBIN can't deduplicate.)
     #define WEAK_SYM __attribute__((weak))
-extern const unsigned char gEmbeddedNNUEData[] WEAK_SYM = {
-    #embed EvalFileDefaultName
+extern const unsigned char gEmbeddedNNUEData[] WEAK_SYM =
+    #ifdef __has_embed
+  {
+        #embed EvalFileDefaultName
 };
-extern const unsigned int gEmbeddedNNUESize WEAK_SYM = sizeof(gEmbeddedNNUEData);
+const int padding = 0;
+    #else
+        #include "../universal/network_dump.inc"
+  ;
+const int padding = 1;  // trailing NUL byte
+    #endif
+extern const unsigned int gEmbeddedNNUESize WEAK_SYM = sizeof(gEmbeddedNNUEData) - padding;
 #else
 const unsigned char gEmbeddedNNUEData[1] = {0x0};
 const unsigned int  gEmbeddedNNUESize    = 1;
@@ -149,10 +158,12 @@ NetworkOutput Network::evaluate(const Position&    pos,
 
     ASSERT_ALIGNED(transformedFeatures, alignment);
 
-    const int  bucket = (pos.count<ALL_PIECES>() - 1) / 4;
-    const auto psqt =
-      featureTransformer.transform(pos, accumulatorStack, cache, transformedFeatures, bucket);
-    const auto positional = network[bucket].propagate(transformedFeatures);
+    NNZInfo<L1> nnzInfo;
+
+    const int  bucket     = (pos.count<ALL_PIECES>() - 1) / 4;
+    const auto psqt       = featureTransformer.transform(pos, accumulatorStack, cache,
+                                                         transformedFeatures, bucket, nnzInfo);
+    const auto positional = network[bucket].propagate(transformedFeatures, nnzInfo);
     return {static_cast<Value>(psqt / OutputScale), static_cast<Value>(positional / OutputScale)};
 }
 
@@ -211,9 +222,10 @@ NnueEvalTrace Network::trace_evaluate(const Position&    pos,
     t.correctBucket = (pos.count<ALL_PIECES>() - 1) / 4;
     for (IndexType bucket = 0; bucket < LayerStacks; ++bucket)
     {
-        const auto materialist =
-          featureTransformer.transform(pos, accumulatorStack, cache, transformedFeatures, bucket);
-        const auto positional = network[bucket].propagate(transformedFeatures);
+        NNZInfo<L1> nnzInfo;
+        const auto  materialist = featureTransformer.transform(pos, accumulatorStack, cache,
+                                                               transformedFeatures, bucket, nnzInfo);
+        const auto  positional  = network[bucket].propagate(transformedFeatures, nnzInfo);
 
         t.psqt[bucket]       = static_cast<Value>(materialist / OutputScale);
         t.positional[bucket] = static_cast<Value>(positional / OutputScale);

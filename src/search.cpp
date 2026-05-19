@@ -580,10 +580,8 @@ bool Search::Worker::iterative_deepening() {
         }
 
         // Have we found a "mate in x" after a completed iteration?
-        if (limits.mate && !threads.stop
-            && ((is_mate(rootMoves[0].score) && VALUE_MATE - rootMoves[0].score <= 2 * limits.mate)
-                || (is_mated(rootMoves[0].score)
-                    && VALUE_MATE + rootMoves[0].score <= 2 * limits.mate)))
+        if (limits.mate && !threads.stop && is_mate_or_mated(rootMoves[0].score)
+            && VALUE_MATE - std::abs(rootMoves[0].score) <= 2 * limits.mate)
             threads.stop = true;
 
         if (!mainThread)
@@ -932,6 +930,12 @@ Value Search::Worker::search(
             else
                 return ttData.value;
         }
+    }  // No cutoff, but why? Does the stored inexact value mismatch our aspiration window?
+    else if (!PvNode && !excludedMove && ttData.depth > depth - (ttData.value <= beta)
+             && is_valid(ttData.value) && ttData.bound != BOUND_EXACT
+             && ttData.bound & (ttData.value >= beta ? BOUND_UPPER : BOUND_LOWER) && depth > 5)
+    {  // If a window-bound mismatch is the only reason cutoff failed, penalize the now-useless tte
+        ttWriter.penalize(1);
     }
 
     // Step 6. Tablebases probe
@@ -1347,7 +1351,7 @@ moves_loop:  // When in check, search starts here
 
         // For first picked move (ttMove) reduce reduction
         else if (move == ttData.move)
-            r -= 2016 + 150 * cutNode;
+            r = std::max(-10, r - 2016 + 150 * cutNode);
 
         if (capture)
             ss->statScore = 809 * int(PieceValue[pos.captured_piece()]) / 128

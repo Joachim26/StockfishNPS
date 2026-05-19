@@ -217,7 +217,8 @@ using vec_uint_t __attribute__((may_alias)) = uint32x4_t;
     #define vec_zero_psqt() psqt_vec_t{0}
 
 static constexpr std::uint32_t Mask[4] = {1, 2, 4, 8};
-    #define vec_nnz(a) vaddvq_u32(vandq_u32(vtstq_u32(a, a), vld1q_u32(Mask)))
+    #define vec_nnz(a) \
+        vaddvq_u32(vandq_u32(vtstq_u32((uint32x4_t) a, (uint32x4_t) a), vld1q_u32(Mask)))
     #define vec128_zero vdupq_n_u16(0)
     #define vec128_set_16(a) vdupq_n_u16(a)
     #define vec128_load(a) vld1q_u16(reinterpret_cast<const std::uint16_t*>(a))
@@ -311,8 +312,7 @@ inline __m256i lasx_cvtepi8_epi16(__m128i a) {
 inline int lasx_vec_nnz(__m256i a) {
     const __m256i cmp = __lasx_xvslt_w(__lasx_xvldi(0), a);
     const __m256i msk = __lasx_xvmskltz_w(cmp);
-    return ((int) __lasx_xvpickve2gr_w(msk, 0) & 0xF)
-         | (((int) __lasx_xvpickve2gr_w(msk, 4) & 0xF) << 4);
+    return ((int) __lasx_xvpickve2gr_w(msk, 0)) | (((int) __lasx_xvpickve2gr_w(msk, 4)) << 4);
 }
 
 #elif USE_LSX
@@ -359,7 +359,7 @@ inline __m128i lsx_packus_32(__m128i a, __m128i b) {
 inline int lsx_vec_nnz(__m128i a) {
     const __m128i cmp = __lsx_vslt_w(__lsx_vldi(0), a);
     const __m128i msk = __lsx_vmskltz_w(cmp);
-    return ((int) __lsx_vpickve2gr_w(msk, 0) & 0xF);
+    return ((int) __lsx_vpickve2gr_w(msk, 0));
 }
     #define vec_nnz(a) lsx_vec_nnz(a)
 
