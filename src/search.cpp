@@ -268,6 +268,22 @@ void Search::Worker::start_searching() {
     // --- Gemini integration ---
     std::string apiKey = options["Gemini_API_Key"];
     size_t multiPV = size_t(options["MultiPV"]);
+    std::string debugLogPath = options["Debug Log File"];
+
+    auto writeToDebugLog = [&](const std::string& msg) {
+        if (!debugLogPath.empty()) {
+            std::string sanitized = msg;
+            std::replace(sanitized.begin(), sanitized.end(), '\n', ' ');
+            std::replace(sanitized.begin(), sanitized.end(), '\r', ' ');
+            sync_cout << sanitized << sync_endl;
+        }
+    };
+
+    if (!debugLogPath.empty() && !apiKey.empty()) {
+        writeToDebugLog("info string Gemini-Integration initiiert. MultiPV=" + std::to_string(multiPV)
+                        + ", RootMoves=" + std::to_string(bestThread->rootMoves.size()));
+    }
+
     if (multiPV > 1 && !apiKey.empty() && bestThread->rootMoves.size() >= 2) {
         int numMoves = std::min(int(multiPV), 4);
         numMoves = std::min(numMoves, int(bestThread->rootMoves.size()));
@@ -291,6 +307,8 @@ void Search::Worker::start_searching() {
         
         std::string cmd = "curl -s -X POST -H \"Content-Type: application/json\" -d @gemini_payload.json \"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=" + apiKey + "\"";
         
+        writeToDebugLog("info string Rufe Gemini API auf...");
+
         std::string result;
 #ifdef _WIN32
         FILE* pipe = _popen(cmd.c_str(), "r");
@@ -307,8 +325,16 @@ void Search::Worker::start_searching() {
 #else
             pclose(pipe);
 #endif
+        } else {
+            writeToDebugLog("info string FEHLER: popen() zur Gemini API fehlgeschlagen (nullptr)!");
         }
         
+        if (result.empty()) {
+            writeToDebugLog("info string FEHLER: Gemini API Antwort ist leer. Pruefe Internetverbindung oder curl Installation.");
+        } else {
+            writeToDebugLog("info string Gemini API Rohantwort: " + result);
+        }
+
         std::string bestGeminiMove = "";
         for (int i = 0; i < numMoves; ++i) {
             auto moveStr = UCIEngine::move(bestThread->rootMoves[i].pv[0], rootPos.is_chess960());
@@ -320,9 +346,13 @@ void Search::Worker::start_searching() {
         if (!bestGeminiMove.empty()) {
             bestmove = bestGeminiMove;
             ponder = ""; // reset ponder
-            sync_cout << "info string Gemini waehlte Zug: " << bestmove << sync_endl;
+            std::string successMsg = "info string Gemini waehlte Zug: " + bestmove;
+            writeToDebugLog(successMsg);
+            if (debugLogPath.empty()) sync_cout << successMsg << sync_endl; // Fallback if no debug log
         } else {
-            sync_cout << "info string Gemini API Fehler oder kein gueltiger Zug gefunden." << sync_endl;
+            std::string failMsg = "info string Gemini API Fehler oder kein gueltiger Zug gefunden.";
+            writeToDebugLog(failMsg);
+            if (debugLogPath.empty()) sync_cout << failMsg << sync_endl; // Fallback if no debug log
         }
         
         std::remove("gemini_payload.json");
