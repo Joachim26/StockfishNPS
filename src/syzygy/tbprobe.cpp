@@ -38,6 +38,7 @@
 #include <vector>
 #include <array>
 
+#include "../attacks.h"
 #include "../bitboard.h"
 #include "../misc.h"
 #include "../movegen.h"
@@ -1406,7 +1407,7 @@ void Tablebases::init(const std::string& paths) {
             if (MapA1D1D4[s1] == idx && (idx || s1 == SQ_B1))  // SQ_B1 is mapped to 0
             {
                 for (Square s2 = SQ_A1; s2 <= SQ_H8; ++s2)
-                    if ((PseudoAttacks[KING][s1] | s1) & s2)
+                    if ((Attacks::PseudoAttacks[KING][s1] | s1) & s2)
                         continue;  // Illegal position
 
                     else if (!off_A1H8(s1) && off_A1H8(s2) > 0)
@@ -1762,6 +1763,13 @@ Config Tablebases::rank_root_moves(const OptionsMap&            options,
 
     if (config.cardinality >= popcount(pos.pieces()) && !pos.can_castle(ANY_CASTLING))
     {
+        // Use DTZ to rank the moves if checkmate is the only zeroing move
+        rankDTZ =
+          rankDTZ
+          || (!pos.pieces(PAWN)
+              && (popcount(pos.pieces()) == 3
+                  || (popcount(pos.pieces()) == 4 && !(pos.pieces(QUEEN) | pos.pieces(ROOK)))));
+
         // Rank moves using DTZ tables, bail out if time_abort flags zeitnot
         config.rootInTB =
           root_probe(pos, rootMoves, options["Syzygy50MoveRule"], rankDTZ, time_abort);
