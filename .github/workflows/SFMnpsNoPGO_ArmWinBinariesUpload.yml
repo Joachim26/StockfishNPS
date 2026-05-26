@@ -47,7 +47,7 @@ jobs:
           make strip ARCH=x86-64-avx2 COMP=$COMP
           cp stockfish.exe ../SFNNv6_avx2.exe
         
-      - uses: xresloader/upload-to-github-Release@v1.6.1
+      - uses: svenstaro/upload-release-action@v2
         if: ${{ matrix.config.run_win11_build }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
