@@ -47,15 +47,6 @@ jobs:
           make strip ARCH=x86-64-avx2 COMP=$COMP
           cp stockfish.exe ../SFNNv6_avx2.exe
         
-      - uses: svenstaro/upload-release-action@v2
-        if: ${{ matrix.config.run_win11_build }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          overwrite: false
-          file: "SFNNv6_avx2.exe"
-          draft: true
-        
       - uses: actions/upload-artifact@v7
         if: ${{ matrix.config.run_win11_build }}
         with:
