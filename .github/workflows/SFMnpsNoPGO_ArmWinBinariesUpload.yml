@@ -45,10 +45,10 @@ jobs:
           make clean
           make -j3 profile-build ARCH=x86-64-avx2 COMP=$COMP
           make strip ARCH=x86-64-avx2 COMP=$COMP
-          cp stockfish.exe ../SFNNv6_avx2.exe
+          cp stockfish.exe ../SFnps_avx2.exe
         
       - uses: actions/upload-artifact@v7
         if: ${{ matrix.config.run_win11_build }}
         with:
-          name: SFNNv6_avx2
-          path: SFNNv6_avx2.exe
+          name: SFnps_avx2
+          path: SFnps_avx2.exe
