@@ -269,6 +269,7 @@ void Search::Worker::start_searching() {
     std::string apiKey = options["Gemini_API_Key"];
     size_t multiPV = size_t(options["MultiPV"]);
     std::string debugLogPath = options["Debug Log File"];
+    std::string geminiDebugPath = debugLogPath.empty() ? "" : debugLogPath + "2";
 
     auto writeToDebugLog = [&](const std::string& msg) {
         if (!debugLogPath.empty()) {
@@ -285,7 +286,7 @@ void Search::Worker::start_searching() {
     }
 
     if (multiPV > 1 && !apiKey.empty() && bestThread->rootMoves.size() >= 2) {
-        int numMoves = std::min(int(multiPV), 4);
+        int numMoves = std::min(int(multiPV), 8);
         numMoves = std::min(numMoves, int(bestThread->rootMoves.size()));
         
         std::string fen = rootPos.fen();
@@ -301,6 +302,30 @@ void Search::Worker::start_searching() {
         
         std::string jsonPayload = "{\"contents\":[{\"parts\":[{\"text\": \"" + prompt + "\"}]}]}";
         
+        if (!geminiDebugPath.empty()) {
+            std::ofstream gfile(geminiDebugPath, std::ios_base::app);
+            if (gfile.is_open()) {
+                gfile << "=== Gemini Search Triggered ===" << std::endl;
+                gfile << "FEN: " << fen << std::endl;
+                gfile << "MultiPV: " << multiPV << std::endl;
+                gfile << "Candidates requested: " << numMoves << std::endl;
+                gfile << "Engine PV Lines:" << std::endl;
+                for (int i = 0; i < numMoves; ++i) {
+                    std::string pvMovesStr;
+                    for (Move m : bestThread->rootMoves[i].pv)
+                        pvMovesStr += UCIEngine::move(m, rootPos.is_chess960()) + " ";
+                    if (!pvMovesStr.empty())
+                        pvMovesStr.pop_back();
+                    gfile << "  #" << i + 1 << ": move=" 
+                          << UCIEngine::move(bestThread->rootMoves[i].pv[0], rootPos.is_chess960())
+                          << " score=" << int(bestThread->rootMoves[i].uciScore)
+                          << " PV=[" << pvMovesStr << "]" << std::endl;
+                }
+                gfile << "Prompt sent: " << prompt << std::endl;
+                gfile.close();
+            }
+        }
+
         std::ofstream temp("gemini_payload.json");
         temp << jsonPayload;
         temp.close();
@@ -343,6 +368,17 @@ void Search::Worker::start_searching() {
                 break;
             }
         }
+
+        if (!geminiDebugPath.empty()) {
+            std::ofstream gfile(geminiDebugPath, std::ios_base::app);
+            if (gfile.is_open()) {
+                gfile << "Gemini API Response: " << result << std::endl;
+                gfile << "Gemini Selected Move: " << (bestGeminiMove.empty() ? "[NONE]" : bestGeminiMove) << std::endl;
+                gfile << "===============================\n" << std::endl;
+                gfile.close();
+            }
+        }
+
         if (!bestGeminiMove.empty()) {
             bestmove = bestGeminiMove;
             ponder = ""; // reset ponder
