@@ -269,7 +269,7 @@ void Search::Worker::start_searching() {
     std::string apiKey = options["Gemini_API_Key"];
     size_t multiPV = size_t(options["MultiPV"]);
     std::string debugLogPath = options["Debug Log File"];
-    std::string geminiDebugPath = debugLogPath.empty() ? "" : debugLogPath + "2";
+    std::string geminiDebugPath = debugLogPath.empty() ? "gemini_debug.txt" : debugLogPath + "2";
 
     auto writeToDebugLog = [&](const std::string& msg) {
         if (!debugLogPath.empty()) {
