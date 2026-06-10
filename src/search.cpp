@@ -271,6 +271,18 @@ void Search::Worker::start_searching() {
     std::string apiKey = options["Gemini_API_Key"];
     size_t multiPV = size_t(options["MultiPV"]);
 
+    // When Skill/UCI_Elo is enabled, iterative_deepening() internally uses
+    // multiPV >= 4 to generate candidate moves. We must mirror that here,
+    // otherwise this check fails when the UCI option MultiPV is still 1.
+    if (skill.enabled())
+        multiPV = std::max(multiPV, size_t(4));
+
+    // Diagnostic: always log status so we can see why Gemini is/isn't triggered
+    sync_cout << "info string [GEMINI] Check: apiKey=" << (apiKey.empty() ? "EMPTY" : "SET")
+              << " multiPV=" << multiPV
+              << " rootMoves=" << bestThread->rootMoves.size()
+              << " skill=" << (skill.enabled() ? "ON" : "OFF") << sync_endl;
+
     if (multiPV > 1 && !apiKey.empty() && bestThread->rootMoves.size() >= 2) {
         int numMoves = std::min(int(multiPV), 8);
         numMoves = std::min(numMoves, int(bestThread->rootMoves.size()));
