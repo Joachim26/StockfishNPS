@@ -265,67 +265,57 @@ void Search::Worker::start_searching() {
     auto bestmove = UCIEngine::move(bestThread->rootMoves[0].pv[0], rootPos.is_chess960());
 
     // --- Gemini integration ---
+    // All debug output uses sync_cout ("info string") which is automatically
+    // mirrored to the Debug Log File by Stockfish's Logger/Tie mechanism.
+    // This works on both Windows (Arena) and Android (DroidFish).
     std::string apiKey = options["Gemini_API_Key"];
     size_t multiPV = size_t(options["MultiPV"]);
-    std::string debugLogPath = options["Debug Log File"];
-    std::string geminiDebugPath = debugLogPath.empty() ? "gemini_debug.txt" : debugLogPath + "2";
-
-    sync_cout << "info string Gemini-Integration: apiKey=" << (apiKey.empty() ? "LEER" : "VORHANDEN")
-              << " multiPV=" << multiPV 
-              << " rootMoves=" << bestThread->rootMoves.size()
-              << " debugLogPath=" << debugLogPath
-              << " geminiDebugPath=" << geminiDebugPath << sync_endl;
 
     if (multiPV > 1 && !apiKey.empty() && bestThread->rootMoves.size() >= 2) {
         int numMoves = std::min(int(multiPV), 8);
         numMoves = std::min(numMoves, int(bestThread->rootMoves.size()));
-        
+
         std::string fen = rootPos.fen();
+
+        // Log all PV lines via sync_cout
+        sync_cout << "info string [GEMINI] === Search Triggered ===" << sync_endl;
+        sync_cout << "info string [GEMINI] FEN: " << fen << sync_endl;
+        sync_cout << "info string [GEMINI] MultiPV: " << multiPV
+                  << " Candidates: " << numMoves << sync_endl;
+
+        for (int i = 0; i < numMoves; ++i) {
+            std::string pvMovesStr;
+            for (Move m : bestThread->rootMoves[i].pv)
+                pvMovesStr += UCIEngine::move(m, rootPos.is_chess960()) + " ";
+            if (!pvMovesStr.empty())
+                pvMovesStr.pop_back();
+            sync_cout << "info string [GEMINI] PV#" << i + 1
+                      << ": move=" << UCIEngine::move(bestThread->rootMoves[i].pv[0], rootPos.is_chess960())
+                      << " score=" << int(bestThread->rootMoves[i].uciScore)
+                      << " pv=" << pvMovesStr << sync_endl;
+        }
+
+        // Build prompt for Gemini
         std::string prompt = "Du bist ein menschlicher Schachspieler mit ca. " + std::to_string(int(options["UCI_Elo"])) + " Elo. Betrachte diese FEN-Stellung: " + fen + " und die besten Zuege, die eine Engine vorschlaegt:\\n";
-        
+
         for (int i = 0; i < numMoves; ++i) {
             auto moveStr = UCIEngine::move(bestThread->rootMoves[i].pv[0], rootPos.is_chess960());
             int scoreCp = int(bestThread->rootMoves[i].uciScore);
             prompt += "- Zug " + moveStr + " (Score: " + std::to_string(scoreCp) + ")\\n";
         }
-        
-        prompt += "Welcher dieser Zuege erscheint dir aus menschlicher, strategischer Sicht am natuerlichsten? Antworte NUR mit dem Zug im UCI-Format (z.B. e2e4).";
-        
-        std::string jsonPayload = "{\"contents\":[{\"parts\":[{\"text\": \"" + prompt + "\"}]}]}";
-        
-        sync_cout << "info string Schreibe Gemini-Debug-Daten..." << sync_endl;
-        std::ofstream gfile(geminiDebugPath, std::ios_base::app);
-        if (gfile.is_open()) {
-            sync_cout << "info string Gemini-Debug-Datei erfolgreich geoeffnet." << sync_endl;
-            gfile << "=== Gemini Search Triggered ===" << std::endl;
-            gfile << "FEN: " << fen << std::endl;
-            gfile << "MultiPV: " << multiPV << std::endl;
-            gfile << "Candidates requested: " << numMoves << std::endl;
-            gfile << "Engine PV Lines:" << std::endl;
-            for (int i = 0; i < numMoves; ++i) {
-                std::string pvMovesStr;
-                for (Move m : bestThread->rootMoves[i].pv)
-                    pvMovesStr += UCIEngine::move(m, rootPos.is_chess960()) + " ";
-                if (!pvMovesStr.empty())
-                    pvMovesStr.pop_back();
-                gfile << "  #" << i + 1 << ": move=" 
-                      << UCIEngine::move(bestThread->rootMoves[i].pv[0], rootPos.is_chess960())
-                      << " score=" << int(bestThread->rootMoves[i].uciScore)
-                      << " PV=[" << pvMovesStr << "]" << std::endl;
-            }
-            gfile << "Prompt sent: " << prompt << std::endl;
-            gfile.close();
-        } else {
-            sync_cout << "info string FEHLER: Konnte Gemini-Debug-Datei nicht oeffnen!" << sync_endl;
-        }
 
+        prompt += "Welcher dieser Zuege erscheint dir aus menschlicher, strategischer Sicht am natuerlichsten? Antworte NUR mit dem Zug im UCI-Format (z.B. e2e4).";
+
+        std::string jsonPayload = "{\"contents\":[{\"parts\":[{\"text\": \"" + prompt + "\"}]}]}";
+
+        // Write payload to temp file for curl
         std::ofstream temp("gemini_payload.json");
         temp << jsonPayload;
         temp.close();
-        
+
         std::string cmd = "curl -s -X POST -H \"Content-Type: application/json\" -d @gemini_payload.json \"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=" + apiKey + "\"";
-        
-        sync_cout << "info string Rufe Gemini API auf..." << sync_endl;
+
+        sync_cout << "info string [GEMINI] Calling API..." << sync_endl;
 
         std::string result;
 #ifdef _WIN32
@@ -344,15 +334,22 @@ void Search::Worker::start_searching() {
             pclose(pipe);
 #endif
         } else {
-            sync_cout << "info string FEHLER: popen() zur Gemini API fehlgeschlagen (nullptr)!" << sync_endl;
-        }
-        
-        if (result.empty()) {
-            sync_cout << "info string FEHLER: Gemini API Antwort ist leer. Pruefe Internetverbindung oder curl Installation." << sync_endl;
-        } else {
-            sync_cout << "info string Gemini API Rohantwort erhalten. Laenge: " << result.length() << sync_endl;
+            sync_cout << "info string [GEMINI] ERROR: popen() failed!" << sync_endl;
         }
 
+        if (result.empty()) {
+            sync_cout << "info string [GEMINI] ERROR: API response empty." << sync_endl;
+        } else {
+            sync_cout << "info string [GEMINI] API response length: " << result.length() << sync_endl;
+            // Log the API response (replace newlines for clean single-line output)
+            std::string responseLog = result.substr(0, 500);
+            for (auto& c : responseLog) {
+                if (c == '\n' || c == '\r') c = ' ';
+            }
+            sync_cout << "info string [GEMINI] Response: " << responseLog << sync_endl;
+        }
+
+        // Find Gemini's chosen move among the candidates
         std::string bestGeminiMove = "";
         for (int i = 0; i < numMoves; ++i) {
             auto moveStr = UCIEngine::move(bestThread->rootMoves[i].pv[0], rootPos.is_chess960());
@@ -362,22 +359,15 @@ void Search::Worker::start_searching() {
             }
         }
 
-        std::ofstream gfile2(geminiDebugPath, std::ios_base::app);
-        if (gfile2.is_open()) {
-            gfile2 << "Gemini API Response: " << result << std::endl;
-            gfile2 << "Gemini Selected Move: " << (bestGeminiMove.empty() ? "[NONE]" : bestGeminiMove) << std::endl;
-            gfile2 << "===============================\n" << std::endl;
-            gfile2.close();
-        }
-
         if (!bestGeminiMove.empty()) {
             bestmove = bestGeminiMove;
-            ponder = ""; // reset ponder
-            sync_cout << "info string Gemini waehlte Zug: " << bestmove << sync_endl;
+            ponder = "";
+            sync_cout << "info string [GEMINI] Selected: " << bestmove << sync_endl;
         } else {
-            sync_cout << "info string Gemini API Fehler oder kein gueltiger Zug gefunden." << sync_endl;
+            sync_cout << "info string [GEMINI] Selected: [NONE] - Fallback to engine best" << sync_endl;
         }
-        
+
+        sync_cout << "info string [GEMINI] === Done ===" << sync_endl;
         std::remove("gemini_payload.json");
     }
     // --- End Gemini integration ---
