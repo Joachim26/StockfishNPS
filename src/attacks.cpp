@@ -39,7 +39,7 @@ alignas(64) Magic Magics[SQUARE_NB][2];
 }
 
 #ifdef USE_PEXT
-using MagicMask = uint16_t;
+using MagicMask = u16;
 #else
 using MagicMask = Bitboard;
 #endif
@@ -69,9 +69,6 @@ static void init_magics(Magic magics[][2]) {
         Magic& bishop = magics[s][BISHOP - BISHOP];
         bishop.mask1  = line_mask(s, NORTH_EAST, SOUTH_WEST);
         bishop.mask2  = line_mask(s, NORTH_WEST, SOUTH_EAST);
-
-        rook.r = bishop.r = square_bb(s) * 2;
-        rook.rr = bishop.rr = square_bb(Square(63 - int(s))) * 2;
     }
 }
 
@@ -80,25 +77,10 @@ static void init_magics(Magic magics[][2]) {
 // Sliding attacks within a rank, indexed by the slider's file and the
 // 8-bit rank occupancy, yielding the 8-bit attack set on that rank
 constexpr auto RankAttacks = []() {
-    std::array<std::array<uint8_t, 256>, FILE_NB> table{};
+    std::array<std::array<u8, 256>, FILE_NB> table{};
     for (int file = 0; file < 8; ++file)
         for (int occ = 0; occ < 256; ++occ)
-        {
-            uint8_t attacks = 0;
-            for (int f = file + 1; f <= 7; ++f)
-            {
-                attacks |= uint8_t(1 << f);
-                if (occ & (1 << f))
-                    break;
-            }
-            for (int f = file - 1; f >= 0; --f)
-            {
-                attacks |= uint8_t(1 << f);
-                if (occ & (1 << f))
-                    break;
-            }
-            table[file][occ] = attacks;
-        }
+            table[file][occ] = u8(sliding_attack(ROOK, Square(file), occ));
     return table;
 }();
 
@@ -216,14 +198,14 @@ constexpr
 
     #if defined(USE_COMPTIME_ATTACKS) && defined(USE_PEXT)
 constexpr auto RookTable = []() {
-    std::array<uint16_t, 0x19000> result{};
-    Magic                         magics[64][2] = {};
+    std::array<u16, 0x19000> result{};
+    Magic                    magics[64][2] = {};
     init_magics(ROOK, result.data(), magics, false);
     return result;
 }();
 constexpr auto BishopTable = []() {
-    std::array<uint16_t, 0x1480> result{};
-    Magic                        magics[64][2] = {};
+    std::array<u16, 0x1480> result{};
+    Magic                   magics[64][2] = {};
     init_magics(BISHOP, result.data(), magics, false);
     return result;
 }();
