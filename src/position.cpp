@@ -252,7 +252,7 @@ Position::set(const string& fenStr, bool isChess960, StateInfo* si) {
             if (file >= FILE_NB)
                 return PositionSetError("Invalid FEN. Invalid file reached.");
 
-            const size_t idx = PieceToChar.find(token);
+            const usize idx = PieceToChar.find(token);
             if (idx == string::npos)
                 return PositionSetError(std::string("Invalid FEN. Invalid piece: ")
                                         + std::string(1, token));
@@ -270,7 +270,7 @@ Position::set(const string& fenStr, bool isChess960, StateInfo* si) {
     if (rank != RANK_1 || file != FILE_NB)
         return PositionSetError("Invalid FEN. Board state encoding ended but cursor not at end.");
 
-    if (pieces(PAWN) & (RANK_1 | RANK_8))
+    if (pieces(PAWN) & (Rank1BB | Rank8BB))
         return PositionSetError("Unsupported position. Pawns on the first or eighth rank.");
 
     if (count<KING>(WHITE) != 1 || count<KING>(BLACK) != 1)
@@ -946,27 +946,6 @@ void Position::do_move(Move                      m,
     st->castlingRights &= ~(castlingRightsMask[from] | castlingRightsMask[to]);
     k ^= Zobrist::castling[st->castlingRights];
 
-    // Move the piece. The tricky Chess960 castling is handled earlier
-    if (m.type_of() != CASTLING)
-    {
-        Piece toPc = pc;
-        if (m.type_of() == PROMOTION)
-            toPc = make_piece(us, m.promotion_type());
-
-        if (captured && m.type_of() != EN_PASSANT)
-        {
-            remove_piece(from, &dts);
-            swap_piece(to, toPc, &dts);
-        }
-        else if (pc == toPc)
-            move_piece(from, to, &dts);
-        else
-        {
-            remove_piece(from, &dts);
-            put_piece(toPc, to, &dts);
-        }
-    }
-
     // If the moving piece is a pawn do some special extra work
     if (type_of(pc) == PAWN)
     {
@@ -1036,10 +1015,10 @@ void Position::do_move(Move                      m,
             st->minorPieceKey ^= Zobrist::psq[pc][from] ^ Zobrist::psq[pc][to];
     }
 
+    if (tt)
+        prefetch(tt->first_entry(adjust_key50(k)));
     // Update the key with the final value
     st->key = k;
-    if (tt)
-        prefetch(tt->first_entry(key()));
 
     if (history)
     {
@@ -1048,6 +1027,27 @@ void Position::do_move(Move                      m,
         prefetch(&history->minor_piece_correction_entry(*this));
         prefetch(&history->nonpawn_correction_entry<WHITE>(*this));
         prefetch(&history->nonpawn_correction_entry<BLACK>(*this));
+    }
+
+    // Move the piece. The tricky Chess960 castling is handled earlier
+    if (m.type_of() != CASTLING)
+    {
+        Piece toPc = pc;
+        if (m.type_of() == PROMOTION)
+            toPc = make_piece(us, m.promotion_type());
+
+        if (captured && m.type_of() != EN_PASSANT)
+        {
+            remove_piece(from, &dts);
+            swap_piece(to, toPc, &dts);
+        }
+        else if (pc == toPc)
+            move_piece(from, to, &dts);
+        else
+        {
+            remove_piece(from, &dts);
+            put_piece(toPc, to, &dts);
+        }
     }
 
     // Set capture piece
