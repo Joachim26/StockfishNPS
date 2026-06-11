@@ -290,10 +290,13 @@ void Search::Worker::start_searching() {
         std::string fen = rootPos.fen();
 
         // Log all PV lines via sync_cout
+        sync_cout << "info string #################################" << sync_endl;
         sync_cout << "info string [GEMINI] === Search Triggered ===" << sync_endl;
         sync_cout << "info string [GEMINI] FEN: " << fen << sync_endl;
         sync_cout << "info string [GEMINI] MultiPV: " << multiPV
                   << " Candidates: " << numMoves << sync_endl;
+
+        std::vector<std::string> pvLinesForLogging;
 
         for (int i = 0; i < numMoves; ++i) {
             std::string pvMovesStr;
@@ -301,10 +304,14 @@ void Search::Worker::start_searching() {
                 pvMovesStr += UCIEngine::move(m, rootPos.is_chess960()) + " ";
             if (!pvMovesStr.empty())
                 pvMovesStr.pop_back();
-            sync_cout << "info string [GEMINI] PV#" << i + 1
-                      << ": move=" << UCIEngine::move(bestThread->rootMoves[i].pv[0], rootPos.is_chess960())
-                      << " score=" << int(bestThread->rootMoves[i].uciScore)
-                      << " pv=" << pvMovesStr << sync_endl;
+
+            std::string logLine = "PV#" + std::to_string(i + 1)
+                      + ": move=" + UCIEngine::move(bestThread->rootMoves[i].pv[0], rootPos.is_chess960())
+                      + " score=" + std::to_string(int(bestThread->rootMoves[i].uciScore))
+                      + " pv=" + pvMovesStr;
+
+            pvLinesForLogging.push_back(logLine);
+            sync_cout << "info string [GEMINI] " << logLine << sync_endl;
         }
 
         // Build prompt for Gemini
@@ -380,6 +387,53 @@ void Search::Worker::start_searching() {
         }
 
         sync_cout << "info string [GEMINI] === Done ===" << sync_endl;
+        sync_cout << "info string #################################" << sync_endl;
+
+        // Write to separate file if possible
+        std::string debugLogPath = options["Debug Log File"];
+        std::string gfilePath = "";
+        std::ofstream gfile;
+
+        if (!debugLogPath.empty()) {
+            size_t dotPos = debugLogPath.find_last_of('.');
+            if (dotPos != std::string::npos && dotPos > debugLogPath.find_last_of("\\/")) {
+                gfilePath = debugLogPath.substr(0, dotPos) + "_gemini.txt";
+            } else {
+                gfilePath = debugLogPath + "_gemini.txt";
+            }
+            gfile.open(gfilePath, std::ios_base::app);
+        }
+
+        // Fallback 1: Try gemini_debug.txt in current folder
+        if (!gfile.is_open()) {
+            gfilePath = "gemini_debug.txt";
+            gfile.open(gfilePath, std::ios_base::app);
+        }
+
+        // Fallback 2: Try D:\gemini_debug.txt on Windows
+        #ifdef _WIN32
+        if (!gfile.is_open()) {
+            gfilePath = "D:\\gemini_debug.txt";
+            gfile.open(gfilePath, std::ios_base::app);
+        }
+        #endif
+
+        if (gfile.is_open()) {
+            gfile << "#################################" << std::endl;
+            gfile << "FEN: " << fen << std::endl;
+            for (const auto& logLine : pvLinesForLogging) {
+                gfile << logLine << std::endl;
+            }
+            gfile << "Prompt sent: " << prompt << std::endl;
+            gfile << "Gemini API Response: " << result << std::endl;
+            gfile << "Gemini Selected Move: " << (bestGeminiMove.empty() ? "[NONE]" : bestGeminiMove) << std::endl;
+            gfile << "#################################" << std::endl << std::endl;
+            gfile.close();
+            sync_cout << "info string [GEMINI] Debug info written to separate file: " << gfilePath << sync_endl;
+        } else {
+            sync_cout << "info string [GEMINI] ERROR: Could not open any separate debug file!" << sync_endl;
+        }
+
         std::remove("gemini_payload.json");
     }
     // --- End Gemini integration ---
