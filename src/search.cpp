@@ -332,7 +332,7 @@ void Search::Worker::start_searching() {
         temp << jsonPayload;
         temp.close();
 
-        std::string cmd = "curl -s -X POST -H \"Content-Type: application/json\" -d @gemini_payload.json \"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=" + apiKey + "\"";
+        std::string cmd = "curl -s -X POST -H \"Content-Type: application/json\" -d @gemini_payload.json \"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=" + apiKey + "\"";
 
         sync_cout << "info string [GEMINI] Calling API..." << sync_endl;
 
