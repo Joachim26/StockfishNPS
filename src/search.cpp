@@ -505,7 +505,7 @@ bool Search::Worker::iterative_deepening() {
 
     for (Color c : {WHITE, BLACK})
         for (int i = 0; i < UINT_16_HISTORY_SIZE; i++)
-            mainHistory[c][i] = (mainHistory[c][i] + 5) * 789 / 1024;
+            mainHistory[c][i] = mainHistory[c][i] * 789 / 1024;
 
     // Iterative deepening loop until requested to stop or the target depth is reached
     while (rootDepth + 1 < MAX_PLY && !threads.stop
@@ -816,6 +816,10 @@ void Search::Worker::do_move(Position& pos, const Move move, StateInfo& st, Stac
 
 void Search::Worker::do_move(
   Position& pos, const Move move, StateInfo& st, const bool givesCheck, Stack* const ss) {
+    // prefetch_key does not model castling, en passant or promotion keys
+    // exactly; for rare moves the prefetch lands on an unused line.
+    prefetch(tt.first_entry(pos.prefetch_key(move)));
+
     bool capture = pos.capture_stage(move);
     ++nodes;
 
@@ -1228,7 +1232,7 @@ Value Search::Worker::search(
         assert(probCutBeta < VALUE_INFINITE && probCutBeta > beta);
 
         MovePicker mp(pos, ttData.move, probCutBeta - ss->staticEval, &captureHistory);
-        Depth      probCutDepth = depth - 4;
+        Depth      probCutDepth = depth - 4 - improving;
 
         while ((move = mp.next_move()) != Move::none())
         {
@@ -1495,7 +1499,7 @@ moves_loop:  // When in check, search starts here
 
         // For first picked move (ttMove) reduce reduction
         else if (move == ttData.move)
-            r = std::max(-10, r - 2016 + 150 * cutNode);
+            r = std::max(0, r - 2016);
 
         if (capture)
             ss->statScore = 809 * int(PieceValue[pos.captured_piece()]) / 128
@@ -2021,15 +2025,9 @@ int Search::Worker::reduction(bool i, Depth d, int mn, int delta) const {
 // 'nodestime' option is enabled, it will return the count of nodes searched
 // instead. This function is called to check whether the search should be
 // stopped based on predefined thresholds like time limits or nodes searched.
-//
-// elapsed_time() returns the actual time elapsed since the start of the search.
-// This function is intended for use only when printing PV outputs, and not used
-// for making decisions within the search algorithm itself.
 TimePoint Search::Worker::elapsed() const {
     return main_manager()->tm.elapsed([this]() { return threads.nodes_searched(); });
 }
-
-TimePoint Search::Worker::elapsed_time() const { return main_manager()->tm.elapsed_time(); }
 
 Value Search::Worker::evaluate(const Position& pos) {
     return Eval::evaluate(network[numaAccessToken], pos, accumulatorStack, refreshTable,

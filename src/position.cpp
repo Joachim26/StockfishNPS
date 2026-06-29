@@ -276,25 +276,18 @@ Position::set(const string& fenStr, bool isChess960, StateInfo* si) {
     if (count<KING>(WHITE) != 1 || count<KING>(BLACK) != 1)
         return PositionSetError("Unsupported position. Incorrect number of kings.");
 
-    const int wPawns = count<PAWN>(WHITE);
-    const int bPawns = count<PAWN>(BLACK);
-    if (wPawns > 8)
-        return PositionSetError("Unsupported position. WHITE has more than 8 pawns.");
-    if (bPawns > 8)
-        return PositionSetError("Unsupported position. BLACK has more than 8 pawns.");
+    for (Color c : {WHITE, BLACK})
+    {
+        if (count<PAWN>(c) > 8)
+            return PositionSetError(std::string("Unsupported position. ")
+                                    + (c == WHITE ? "WHITE" : "BLACK") + " has more than 8 pawns.");
 
-    const int wAdditionalKnights = std::max((int) count<KNIGHT>(WHITE) - 2, 0);
-    const int bAdditionalKnights = std::max((int) count<KNIGHT>(BLACK) - 2, 0);
-    const int wAdditionalBishops = std::max((int) count<BISHOP>(WHITE) - 2, 0);
-    const int bAdditionalBishops = std::max((int) count<BISHOP>(BLACK) - 2, 0);
-    const int wAdditionalRooks   = std::max((int) count<ROOK>(WHITE) - 2, 0);
-    const int bAdditionalRooks   = std::max((int) count<ROOK>(BLACK) - 2, 0);
-    const int wAdditionalQueens  = std::max((int) count<QUEEN>(WHITE) - 1, 0);
-    const int bAdditionalQueens  = std::max((int) count<QUEEN>(BLACK) - 1, 0);
-    if (wAdditionalKnights + wAdditionalBishops + wAdditionalRooks + wAdditionalQueens > 8 - wPawns)
-        return PositionSetError("Unsupported position. Too many pieces for WHITE.");
-    if (bAdditionalKnights + bAdditionalBishops + bAdditionalRooks + bAdditionalQueens > 8 - bPawns)
-        return PositionSetError("Unsupported position. Too many pieces for BLACK.");
+        int additional = std::max(count<KNIGHT>(c) - 2, 0) + std::max(count<BISHOP>(c) - 2, 0)
+                       + std::max(count<ROOK>(c) - 2, 0) + std::max(count<QUEEN>(c) - 1, 0);
+        if (additional > 8 - count<PAWN>(c))
+            return PositionSetError(std::string("Unsupported position. Too many pieces for ")
+                                    + (c == WHITE ? "WHITE." : "BLACK."));
+    }
 
     // 2. Active color
     if (!(ss >> token))
@@ -752,26 +745,8 @@ bool Position::pseudo_legal(const Move m) const {
     else if (!(attacks_bb(type_of(pc), from, pieces()) & to))
         return false;
 
-    // Evasions generator already takes care to avoid some kind of illegal moves
-    // and legal() relies on this. We therefore have to take care that the same
-    // kind of moves are filtered out here.
     if (checkers())
-    {
-        if (type_of(pc) != KING)
-        {
-            // Double check? In this case, a king move is required
-            if (more_than_one(checkers()))
-                return false;
-
-            // Our move must be a blocking interposition or a capture of the checking piece
-            if (!(between_bb(square<KING>(us), lsb(checkers())) & to))
-                return false;
-        }
-        // In case of king moves under check we have to remove the king so as to catch
-        // invalid moves like b1a1 when opposite queen is on c1.
-        else if (attackers_to_exist(to, pieces() ^ from, ~us))
-            return false;
-    }
+        return MoveList<EVASIONS>(*this).contains(m);
 
     return true;
 }
@@ -1315,6 +1290,21 @@ void Position::update_piece_threats(Piece               pc,
 #endif
 }
 
+Key Position::prefetch_key(Move m) const {
+    Square from     = m.from_sq();
+    Square to       = m.to_sq();
+    Piece  pc       = piece_on(from);
+    Piece  captured = piece_on(to);
+    Key    k        = st->key ^ Zobrist::side;
+
+    k ^= Zobrist::psq[captured][to] ^ Zobrist::psq[pc][to] ^ Zobrist::psq[pc][from];
+
+    if (captured || type_of(pc) == PAWN)
+        return k;
+
+    return adjust_key50<true>(k);
+}
+
 // Helper used to do/undo a castling move. This is a bit
 // tricky in Chess960 where from/to squares can overlap.
 template<bool Do>
@@ -1370,6 +1360,8 @@ void Position::do_null_move(StateInfo& newSt) {
     st->key ^= Zobrist::side;
 
     st->pliesFromNull = 0;
+
+    st->capturedPiece = NO_PIECE;
 
     sideToMove = ~sideToMove;
 
