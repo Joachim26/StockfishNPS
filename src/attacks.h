@@ -31,7 +31,7 @@
     #define USE_HYPERBOLA_QUINT
 #elif defined(__loongarch__) && __loongarch_grlen == 64
     #define USE_HYPERBOLA_QUINT
-#elif defined(USE_AVX2) && !defined(USE_PEXT)
+#elif defined(USE_AVX2)
     #include <immintrin.h>
     #define USE_DUAL_HYPERBOLA_QUINT
 #endif
@@ -43,12 +43,24 @@ void init();
 #ifdef USE_HYPERBOLA_QUINT
 
 inline Bitboard reverse_bb(Bitboard bb) {
-    #ifdef __aarch64__
+    #if __has_builtin(__builtin_bitreverse64)
+    return __builtin_bitreverse64(bb);
+    #else
+        #ifdef __aarch64__
+            #if defined(__GNUC__) && !defined(__clang__) \
+              && (__GNUC__ < 12 || (__GNUC__ == 12 && __GNUC_MINOR__ < 2))
+    // no rbit in arm_acle.h
+    Bitboard out;
+    asm("rbit %0, %1" : "=r"(out) : "r"(bb));
+    return out;
+            #else
     return __rbitll(bb);
-    #else  // loongarch
+            #endif
+        #else  // loongarch
     Bitboard out;
     asm("bitrev.d %0, %1" : "=r"(out) : "r"(bb));
     return out;
+        #endif
     #endif
 }
 
@@ -75,7 +87,7 @@ const Magic& magic(Square s, PieceType pt);
 
 #elif defined(USE_DUAL_HYPERBOLA_QUINT)
 
-struct DualMagic {
+struct alignas(32) DualMagic {
     // file, diagonal, unused, antidiagonal
     Bitboard maskFile, maskDiag, maskNone, maskAntidiag;
     // Precomputed 2 * square_bb(sq), 2 * reverse(square_bb(sq))
@@ -128,37 +140,23 @@ const DualMagic& dual_magic(Square s);
 #else
 // Magic holds all magic bitboards relevant data for a single square
 struct Magic {
-    Bitboard mask;
-    #ifdef USE_PEXT
-    u16*     attacks;
-    Bitboard pseudoAttacks;
-    #else
+    Bitboard  mask;
     Bitboard* attacks;
     Bitboard  magic;
     unsigned  shift;
-    #endif
 
     // Compute the attack's index using the 'magic bitboards' approach
     unsigned index(Bitboard occupied) const {
-
-    #ifdef USE_PEXT
-        return unsigned(pext(occupied, mask));
-    #else
         if (Is64Bit)
             return unsigned(((occupied & mask) * magic) >> shift);
 
         unsigned lo = unsigned(occupied) & unsigned(mask);
         unsigned hi = unsigned(occupied >> 32) & unsigned(mask >> 32);
         return (lo * unsigned(magic) ^ hi * unsigned(magic >> 32)) >> shift;
-    #endif
     }
 
     Bitboard attacks_bb([[maybe_unused]] Square s, Bitboard occupied) const {
-    #ifdef USE_PEXT
-        return pdep(attacks[index(occupied)], pseudoAttacks);
-    #else
         return attacks[index(occupied)];
-    #endif
     }
 };
 
