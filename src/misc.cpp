@@ -23,6 +23,7 @@
 #include <cassert>
 #include <cctype>
 #include <cstring>
+#include <cerrno>
 #include <cmath>
 #include <cstdlib>
 #include <filesystem>
@@ -157,6 +158,18 @@ std::string engine_version_info() {
         date >> month >> day >> year;
         ss << year << std::setw(2) << std::setfill('0') << (1 + months.find(month) / 4)
            << std::setw(2) << std::setfill('0') << day;
+#endif
+
+#ifdef GIT_DIFFINDEX
+        ss << "-m";
+#endif
+
+        ss << "-";
+
+#ifdef GIT_SHA
+        ss << stringify(GIT_SHA);
+#else
+        ss << "nogit";
 #endif
     }
 
@@ -537,10 +550,14 @@ CommandLine::CommandLine(int _argc, char** _argv) :
 }
 
 
-usize str_to_size_t(const std::string& s) {
-    unsigned long long value = std::stoull(s);
-    if (value > std::numeric_limits<usize>::max())
-        std::exit(EXIT_FAILURE);
+std::optional<usize> str_to_size_t(const std::string& s) {
+    if (s.empty() || s[0] == '-')
+        return std::nullopt;
+    errno                           = 0;
+    char*                    endptr = nullptr;
+    const unsigned long long value  = std::strtoull(s.c_str(), &endptr, 10);
+    if (errno == ERANGE || *endptr != '\0' || value > std::numeric_limits<usize>::max())
+        return std::nullopt;
     return static_cast<usize>(value);
 }
 
