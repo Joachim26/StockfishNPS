@@ -26,6 +26,7 @@
 
 #include "features/half_ka_v2_hm.h"
 #include "features/full_threats.h"
+#include "features/pp_3wide.h"
 #include "layers/affine_transform.h"
 #include "layers/affine_transform_sparse_input.h"
 #include "layers/clipped_relu.h"
@@ -37,6 +38,7 @@ namespace Stockfish::Eval::NNUE {
 
 // Input features used in evaluation function
 using ThreatFeatureSet = Features::FullThreats;
+using PairFeatureSet   = Features::PP_3Wide;
 using PSQFeatureSet    = Features::HalfKAv2_hm;
 
 // Number of input feature dimensions after conversion
@@ -115,7 +117,7 @@ struct NetworkArchitecture {
         Buffer buffer;
 
         fc_0.propagate(transformedFeatures, buffer.fc_0_out, nnzInfo);
-#if defined(USE_AVX2_PAIR_ACTIVATIONS)
+#if defined(USE_PAIR_ACTIVATIONS)
         ac_sqr_0.propagate_pair(buffer.fc_0_out, buffer.concat_buffer,
                                 buffer.concat_buffer + FC_0_OUTPUTS);
 #else
@@ -124,7 +126,7 @@ struct NetworkArchitecture {
 #endif
 
         fc_1.propagate(buffer.concat_buffer, buffer.fc_1_out);
-#if defined(USE_AVX2_PAIR_ACTIVATIONS)
+#if defined(USE_PAIR_ACTIVATIONS)
         ac_sqr_1.propagate_pair(buffer.fc_1_out, buffer.concat_buffer + FC_0_OUTPUTS * 2,
                                 buffer.concat_buffer + FC_0_OUTPUTS * 2 + FC_1_OUTPUTS);
 #else
