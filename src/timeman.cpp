@@ -55,8 +55,14 @@ void TimeManagement::init(Search::LimitsType& limits,
     startTime    = limits.startTime;
     useNodesTime = npmsec != 0;
 
+    if (useNodesTime)
+        limits.movetime *= npmsec;
+
     if (limits.time[us] == 0)
+    {
+        optimumTime = maximumTime = NoBound;
         return;
+    }
 
     TimePoint moveOverhead = TimePoint(options["Move Overhead"]);
     TimePoint slowMover    = TimePoint(options["Slow Mover"]);
@@ -84,13 +90,14 @@ void TimeManagement::init(Search::LimitsType& limits,
     // These numbers are used where multiplications, divisions,
     // or comparisons with constants are involved.
     const i64       scaleFactor = useNodesTime ? npmsec : 1;
-    const TimePoint scaledTime  = limits.time[us] / scaleFactor;
+    const TimePoint scaledTime  = std::max(TimePoint(1), limits.time[us] / scaleFactor);
 
     // Maximum move horizon
     int mtg = limits.movestogo ? std::min(limits.movestogo, 50) : 50;
 
-    // If less than one second, gradually reduce mtg
-    if (scaledTime < 1000)
+    // If less than one second, gradually reduce mtg.
+    // In cyclic time controls we keep the actual movestogo as horizon.
+    if (scaledTime < 1000 && limits.movestogo == 0)
         mtg = int(scaledTime * 0.05);
 
     // Make sure timeLeft is > 0 since we may use it as a divisor

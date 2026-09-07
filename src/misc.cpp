@@ -54,7 +54,7 @@ namespace fs = std::filesystem;
 namespace {
 
 // Version number or dev.
-constexpr std::string_view version = "dev";
+constexpr std::string_view version = "19";
 
 // Our fancy logging facility. The trick here is to replace cin.rdbuf() and
 // cout.rdbuf() with two Tie objects that tie cin and cout to a file stream. We
@@ -480,7 +480,7 @@ u64 hash_bytes(const char* data, usize size) {
     {
         u64 k = 0;
         for (int i = (size & 7) - 1; i >= 0; i--)
-            k = (k << 8) | u64(end[i]);
+            k = (k << 8) | u8(end[i]);
 
         h ^= k;
         h *= m;
@@ -496,6 +496,8 @@ u64 hash_bytes(const char* data, usize size) {
 // Trampoline helper to avoid moving Logger to misc.h
 void start_logger(const fs::path& fname) { Logger::start(fname); }
 
+
+// Convert a wide string to an UTF8 string
 std::string utf8_from_wstring(std::wstring_view s) {
 #ifdef _WIN32
     if (s.empty())
@@ -514,19 +516,34 @@ std::string utf8_from_wstring(std::wstring_view s) {
 #endif
 }
 
+
+// This utility allows us to handle filenames and paths with UTF8 encoding
 fs::path path_from_utf8(const std::string& path) {
 #ifdef _WIN32
     int u8len = static_cast<int>(path.size());
-    int wlen  = MultiByteToWideChar(CP_UTF8, 0, path.c_str(), u8len, NULL, 0);
 
-    std::wstring wstr(static_cast<usize>(wlen), L'\0');
-    MultiByteToWideChar(CP_UTF8, 0, path.c_str(), u8len, wstr.data(), wlen);
-    return {wstr};
+    // First attempt UTF-8, then fall back to ANSI for old GUIs like Arena
+    constexpr int CodePages[2] = {CP_UTF8, CP_ACP};
+    for (int cp : CodePages)
+    {
+        int flags = cp == CP_UTF8 ? MB_ERR_INVALID_CHARS : 0;
+        int wlen  = MultiByteToWideChar(cp, flags, path.c_str(), u8len, NULL, 0);
+        if (wlen > 0)
+        {
+            std::wstring wstr(static_cast<usize>(wlen), L'\0');
+            MultiByteToWideChar(cp, 0, path.c_str(), u8len, wstr.data(), wlen);
+            return {wstr};
+        }
+    }
+
+    return {path};
 #else
     return {path};
 #endif
 }
 
+
+// Constructor for the CommandLine class
 CommandLine::CommandLine(int _argc, char** _argv) :
     argc(_argc),
     argv(_argv) {
@@ -550,18 +567,20 @@ CommandLine::CommandLine(int _argc, char** _argv) :
 }
 
 
+// Read a numerical value from the command line
 std::optional<usize> str_to_size_t(const std::string& s) {
     if (s.empty() || s[0] == '-')
         return std::nullopt;
     errno                           = 0;
     char*                    endptr = nullptr;
     const unsigned long long value  = std::strtoull(s.c_str(), &endptr, 10);
-    if (errno == ERANGE || (*endptr != '\0' && !std::isspace(*endptr))
+    if (errno == ERANGE || (*endptr != '\0' && !std::isspace(static_cast<unsigned char>(*endptr)))
         || value > std::numeric_limits<usize>::max())
         return std::nullopt;
     return static_cast<usize>(value);
 }
 
+// Read the given file as bytes (returns std::nullopt if the file does not exist)
 std::optional<std::string> read_file_to_string(const std::string& path) {
     std::ifstream f(path, std::ios_base::binary);
     if (!f)
@@ -569,14 +588,21 @@ std::optional<std::string> read_file_to_string(const std::string& path) {
     return std::string(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
 }
 
+// Remove all spaces from a string
 void remove_whitespace(std::string& s) {
-    s.erase(std::remove_if(s.begin(), s.end(), [](char c) { return std::isspace(c); }), s.end());
+    s.erase(std::remove_if(s.begin(), s.end(), [](unsigned char c) { return std::isspace(c); }),
+            s.end());
 }
 
+// Test if a string has only spaces
 bool is_whitespace(std::string_view s) {
-    return std::all_of(s.begin(), s.end(), [](char c) { return std::isspace(c); });
+    return std::all_of(s.begin(), s.end(), [](unsigned char c) { return std::isspace(c); });
 }
 
+
+// Return the directory where our Stockfish binary sits. This is useful,
+// because when the NNUE network is not embeded in the binary, this directory
+// is one of the locations where we look for the NNUE file.
 fs::path CommandLine::get_binary_directory(fs::path argv0) {
 
 #ifdef _WIN32
@@ -597,8 +623,11 @@ fs::path CommandLine::get_binary_directory(fs::path argv0) {
     return binaryDirectory;
 }
 
+// Return the working directory
 fs::path CommandLine::get_working_directory() { return std::filesystem::current_path(); }
 
+
+// On Windows, tell the console to use UTF8 encoding
 void set_console_utf8() {
 #ifdef _WIN32
     SetConsoleCP(CP_UTF8);

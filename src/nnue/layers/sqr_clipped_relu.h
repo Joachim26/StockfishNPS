@@ -69,11 +69,14 @@ class SqrClippedReLU {
 
 #if defined(USE_PAIR_ACTIVATIONS)
     // Produce the squared and linear clipped activations together, sharing the input loads and
-    // the initial signed 32-to-16-bit saturating narrowing.
+    // the initial signed 32-to-16-bit saturating narrowing. No shuffle is needed to fix up the
+    // pack lane order because the next layer's weights were already reverse pre-permuted to match
+    // by AffineTransform::get_weight_index_scrambled().
     void propagate_pair(const InputType* input, OutputType* squared, OutputType* clipped) const {
         static_assert(WeightScaleBitsLocal >= 5 && WeightScaleBitsLocal <= 8,
                       "SqrClippedReLU only support WeightScaleBitsLocal between 5 and 8");
-        static_assert(InputDimensions % 32 == 0);
+        static_assert(InputDimensions % 32 == 0,
+                      "propagate_pair() needs a tail path if L2/L3 change to multiple of 16");
 
         constexpr IndexType NumChunks       = InputDimensions / 32;
         constexpr int       SimdShiftAmount = WeightScaleBitsLocal * 2 + 7 - 16;
@@ -87,10 +90,8 @@ class SqrClippedReLU {
 
         for (IndexType i = 0; i < NumChunks; ++i)
         {
-            const __m256i words0 = _mm512_cvtsepi32_epi16(_mm512_load_si512(&in[i * 2 + 0]));
-            const __m256i words1 = _mm512_cvtsepi32_epi16(_mm512_load_si512(&in[i * 2 + 1]));
-            const __m512i words  = _mm512_inserti64x4(_mm512_castsi256_si512(words0), words1, 1);
-
+            const __m512i words = _mm512_packs_epi32(_mm512_load_si512(&in[i * 2 + 0]),
+                                                     _mm512_load_si512(&in[i * 2 + 1]));
             const __m512i sqrWords =
               _mm512_srli_epi16(_mm512_mulhi_epi16(words, words), SimdShiftAmount);
             _mm256_store_si256(&sqrOut[i], _mm512_cvtsepi16_epi8(sqrWords));
@@ -100,7 +101,7 @@ class SqrClippedReLU {
             _mm256_store_si256(&clipOut[i], _mm512_cvtsepi16_epi8(clipWords));
         }
 
-    #elif defined(USE_AVX2_PAIR_ACTIVATIONS)
+    #elif defined(USE_AVX2)
         const auto in      = reinterpret_cast<const __m256i*>(input);
         auto       sqrOut  = reinterpret_cast<__m256i*>(squared);
         auto       clipOut = reinterpret_cast<__m256i*>(clipped);
@@ -128,10 +129,13 @@ class SqrClippedReLU {
             const __m256i clipPacked = _mm256_packs_epi16(clip0, clip1);
             _mm256_store_si256(&clipOut[i], clipPacked);
         }
+    #else
+        #error "propagate_pair() requires AVX2 or AVX512"
     #endif
     }
 #endif
 
+#if !defined(USE_PAIR_ACTIVATIONS)
     // Forward propagation
     void propagate(const InputType* input, OutputType* output) const {
         static_assert(WeightScaleBitsLocal >= 5 && WeightScaleBitsLocal <= 8,
@@ -140,24 +144,7 @@ class SqrClippedReLU {
         // MulHi strips the lower 16 bits (i.e. shift by 16) so we need to shift out the remaining.
         [[maybe_unused]] constexpr int SimdShiftAmount = WeightScaleBitsLocal * 2 + 7 - 16;
 
-#if defined(USE_AVX512)
-        static_assert(InputDimensions % 32 == 0);
-        constexpr IndexType NumChunks = InputDimensions / 32;
-        const auto          in        = reinterpret_cast<const __m512i*>(input);
-        const auto          out       = reinterpret_cast<__m256i*>(output);
-        for (IndexType i = 0; i < NumChunks; ++i)
-        {
-            const __m256i words0 = _mm512_cvtsepi32_epi16(_mm512_load_si512(&in[i * 2 + 0]));
-            const __m256i words1 = _mm512_cvtsepi32_epi16(_mm512_load_si512(&in[i * 2 + 1]));
-            __m512i       words  = _mm512_inserti64x4(_mm512_castsi256_si512(words0), words1, 1);
-
-            words = _mm512_srli_epi16(_mm512_mulhi_epi16(words, words), SimdShiftAmount);
-
-            _mm256_store_si256(&out[i], _mm512_cvtsepi16_epi8(words));
-        }
-        constexpr IndexType Start = NumChunks * 32;
-
-#elif defined(USE_SSE2)
+    #if defined(USE_SSE2)
         constexpr IndexType NumChunks = InputDimensions / 16;
         const auto          in        = reinterpret_cast<const __m128i*>(input);
         const auto          out       = reinterpret_cast<__m128i*>(output);
@@ -175,7 +162,7 @@ class SqrClippedReLU {
         }
         constexpr IndexType Start = NumChunks * 16;
 
-#elif defined(USE_LASX)
+    #elif defined(USE_LASX)
         constexpr IndexType NumChunks = InputDimensions / 32;
         const auto          in        = reinterpret_cast<const __m256i*>(input);
         const auto          out       = reinterpret_cast<__m256i*>(output);
@@ -185,14 +172,12 @@ class SqrClippedReLU {
             const __m256i words1 = __lasx_xvssrani_h_w(in[i * 4 + 3], in[i * 4 + 2], 0);
             const __m256i sqr0   = __lasx_xvmuh_h(words0, words0);
             const __m256i sqr1   = __lasx_xvmuh_h(words1, words1);
-            __m256i       packed;
-            packed               = __lasx_xvssrlni_b_h(sqr1, sqr0, SimdShiftAmount);
-            const __m256i permed = __lasx_xvpermi_d(packed, 0xD8);
-            __lasx_xvst(__lasx_xvshuf4i_w(permed, 0xD8), out + i, 0);
+            const __m256i packed = __lasx_xvssrlni_b_h(sqr1, sqr0, SimdShiftAmount);
+            __lasx_xvst(packed, out + i, 0);
         }
         constexpr IndexType Start = NumChunks * 32;
 
-#elif defined(USE_LSX)
+    #elif defined(USE_LSX)
         constexpr IndexType NumChunks = InputDimensions / 16;
         const auto          in        = reinterpret_cast<const __m128i*>(input);
         const auto          out       = reinterpret_cast<__m128i*>(output);
@@ -206,7 +191,7 @@ class SqrClippedReLU {
         }
         constexpr IndexType Start = NumChunks * 16;
 
-#elif defined(USE_NEON)
+    #elif defined(USE_NEON)
         constexpr IndexType NumChunks = InputDimensions / 16;
         const auto          in        = reinterpret_cast<const int32x4_t*>(input);
         const auto          out       = reinterpret_cast<int8x16_t*>(output);
@@ -225,7 +210,7 @@ class SqrClippedReLU {
         }
         constexpr IndexType Start = NumChunks * 16;
 
-#elif defined(USE_RVV)
+    #elif defined(USE_RVV)
 
         for (usize j = 0; j < InputDimensions;)
         {
@@ -241,9 +226,9 @@ class SqrClippedReLU {
         }
         constexpr IndexType Start = InputDimensions;
 
-#else
+    #else
         constexpr IndexType Start = 0;
-#endif
+    #endif
 
         for (IndexType i = Start; i < InputDimensions; ++i)
         {
@@ -254,6 +239,7 @@ class SqrClippedReLU {
                        ((long long) (input[i]) * input[i]) >> (2 * WeightScaleBitsLocal + 7)));
         }
     }
+#endif
 };
 
 }  // namespace Stockfish::Eval::NNUE::Layers

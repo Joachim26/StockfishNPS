@@ -122,7 +122,7 @@ affine_transform_non_ssse3(i32* output, const i8* weights, const i32* biases, co
 
 #endif  // !ENABLE_SEQ_OPT
 
-template<IndexType InDims, IndexType OutDims, bool ScrambledInput = false>
+template<IndexType InDims, IndexType OutDims>
 class AffineTransform {
    public:
     // Input/output type
@@ -152,17 +152,18 @@ class AffineTransform {
     static constexpr IndexType get_weight_index_scrambled(IndexType i) {
         IndexType inputIndex = i % PaddedInputDimensions;
 
-#if defined(USE_AVX2_PAIR_ACTIVATIONS)
-        if constexpr (ScrambledInput)
-        {
-            // AVX2 packs operate independently on 128-bit lanes. Keep their interleaved output
-            // order and rearrange the following layer's weights instead of issuing VPERMD.
-            const IndexType block = inputIndex / 32;
-            const IndexType chunk = (inputIndex % 32) / 4;
-            inputIndex            = block * 32 + ((chunk % 2) * 4 + chunk / 2) * 4 + inputIndex % 4;
-        }
+#if defined(USE_PAIR_ACTIVATIONS) || defined(USE_LASX)
+        // At load time, pre-permute the weights to match the per-128-bit-lane interleaving that
+        // the previous layer produces, either via SqrClippedReLU::propagate_pair() or via the
+        // separate SqrClippedReLU/ClippedReLU propagate() calls, so no shuffle is needed at runtime.
+        const IndexType block = inputIndex / 32;
+        const IndexType chunk = (inputIndex % 32) / 4;
+    #if defined(USE_AVX512)
+        inputIndex = block * 32 + ((chunk % 4) * 2 + chunk / 4) * 4 + inputIndex % 4;
+    #else
+        inputIndex = block * 32 + ((chunk % 2) * 4 + chunk / 2) * 4 + inputIndex % 4;
+    #endif
 #endif
-
         return inputIndex / 4 * OutputDimensions * 4 + i / PaddedInputDimensions * 4
              + inputIndex % 4;
     }
@@ -240,6 +241,13 @@ class AffineTransform {
         #define vec_add_32 __lsx_vadd_w
         #define vec_add_dpbusd_32 SIMD::lsx_m128_add_dpbusd_epi32
     #endif
+    #if defined(USE_LASX)
+        #define vec_load_32(a) __lasx_xvldrepl_w(reinterpret_cast<const void*>(a), 0)
+    #elif defined(USE_LSX)
+        #define vec_load_32(a) __lsx_vldrepl_w(reinterpret_cast<const void*>(a), 0)
+    #else
+        #define vec_load_32(a) vec_set_32(load_as<i32>(a))
+    #endif
 
             static constexpr IndexType OutputSimdWidth = sizeof(vec_t) / sizeof(OutputType);
 
@@ -265,8 +273,8 @@ class AffineTransform {
     #if defined(USE_VNNI) || defined(USE_NEON_DOTPROD)
             for (; i < NumChunks; i += 2)
             {
-                const vec_t in0 = vec_set_32(load_as<i32>(input + i * sizeof(i32)));
-                const vec_t in1 = vec_set_32(load_as<i32>(input + (i + 1) * sizeof(i32)));
+                const vec_t in0 = vec_load_32(input + i * sizeof(i32));
+                const vec_t in1 = vec_load_32(input + (i + 1) * sizeof(i32));
                 const auto  col0 =
                   reinterpret_cast<const vec_t*>(&weights[i * OutputDimensions * 4]);
                 const auto col1 =
@@ -288,7 +296,7 @@ class AffineTransform {
     #endif
             for (; i < NumChunks; ++i)
             {
-                const vec_t in0 = vec_set_32(load_as<i32>(input + i * sizeof(i32)));
+                const vec_t in0 = vec_load_32(input + i * sizeof(i32));
                 const auto  col0 =
                   reinterpret_cast<const vec_t*>(&weights[i * OutputDimensions * 4]);
 
@@ -301,12 +309,11 @@ class AffineTransform {
                 outptr[k] = acc[k];
 
     #undef vec_set_32
+    #undef vec_load_32
     #undef vec_add_dpbusd_32
         }
         else if constexpr (OutputDimensions == 1)
         {
-    // We cannot use AVX512 for the last layer because there are only 32 inputs
-    // and the buffer is not padded to 64 elements.
     #if defined(USE_AVX2)
             using vec_t = __m256i;
         #define vec_setzero() _mm256_setzero_si256()

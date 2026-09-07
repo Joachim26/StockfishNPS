@@ -48,8 +48,7 @@ namespace Stockfish {
 
 namespace NN = Eval::NNUE;
 
-constexpr int MaxHashMB  = Is64Bit ? 33554432 : 2048;
-int           MaxThreads = std::max(1024, 4 * int(get_hardware_concurrency()));
+int MaxThreads = std::max(1024, 4 * int(get_hardware_concurrency()));
 
 // The default configuration will attempt to group L3 domains up to 32 threads.
 // This size was found to be a good balance between the Elo gain of increased
@@ -63,7 +62,7 @@ Engine::Engine(std::optional<std::filesystem::path> path) :
     states(new std::deque<StateInfo>(1)),
     threads(),
     networkFile{std::nullopt, ""},
-    network(numaContext) {
+    network(numaContext, get_default_network()) {
 
     pos.set(StartFEN, false, &states->back());
 
@@ -159,7 +158,6 @@ Engine::Engine(std::optional<std::filesystem::path> path) :
           return std::nullopt;
       }));
 
-    network = get_default_network();
     threads.clear();
     threads.ensure_network_replicated();
     resize_threads();
