@@ -2,12 +2,10 @@ name: Stockfish
 on:
   push:
     branches:
-      - master
       - tools
       - github_ci
   pull_request:
     branches:
-      - master
       - tools
 
 concurrency:
