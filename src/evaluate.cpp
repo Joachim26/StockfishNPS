@@ -39,6 +39,9 @@
 
 namespace Stockfish {
 
+int Eval::NNUE::RandomEval = 0;
+int Eval::NNUE::WaitMs = 0;
+
 static int simple_eval(const Position& pos) {
     const Color c = pos.side_to_move();
     return PawnValue * (pos.count<PAWN>(c) - pos.count<PAWN>(~c)) + pos.non_pawn_material(c)
@@ -46,9 +49,6 @@ static int simple_eval(const Position& pos) {
 }
 
 Value scale_evaluation(Value nnue, int optimism, const Position& pos);
-
-int Eval::NNUE::RandomEval = 0;
-int Eval::NNUE::WaitMs = 0;
 
 Value Eval::evaluate(const Eval::NNUE::Network&     network,
                      const Position&                pos,
@@ -84,17 +84,17 @@ Value scale_evaluation(Value nnue, int optimism, const Position& pos) {
     v -= v * pos.rule50_count() / 189;
 
     // SFnps Begin //
-    if((NNUE::RandomEval) || (NNUE::WaitMs))
+    if((Eval::NNUE::RandomEval) || (Eval::NNUE::WaitMs))
     {
       // waitms millisecs
-      std::this_thread::sleep_for(std::chrono::milliseconds(NNUE::WaitMs));
+      std::this_thread::sleep_for(std::chrono::milliseconds(Eval::NNUE::WaitMs));
 
       // RandomEval
       static thread_local std::mt19937_64 rng = [](){return std::mt19937_64(std::time(0));}();
       std::normal_distribution<float> d(0.0, PawnValue);
       float r = d(rng);
       r = std::clamp<float>(r, VALUE_TB_LOSS_IN_MAX_PLY + 1, VALUE_TB_WIN_IN_MAX_PLY - 1);
-      v = (NNUE::RandomEval * Value(r) + (100 - NNUE::RandomEval) * v) / 100;
+      v = (Eval::NNUE::RandomEval * Value(r) + (100 - Eval::NNUE::RandomEval) * v) / 100;
     }
     // SFnps End //
 
