@@ -675,6 +675,13 @@ void Search::Worker::do_move(Position&    pos,
 
     ++nodes;
 
+    // SFnps Begin
+    if (limits.nodes > 0 && limits.nodes <= 200 && threads.nodes_searched() >= limits.nodes)
+    {
+        threads.stop = true;
+    }
+    // SFnps End
+
     Dirties& dirties = accumulatorStack.push();
     pos.do_move(move, st, givesCheck, dirties, &tt, &sharedHistory);
 
