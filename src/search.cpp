@@ -216,6 +216,11 @@ void Search::Worker::start_searching() {
     tt.new_search();
     main_manager()->updates.onStart();
 
+    //SFnps Begin
+    if (options["Search Nodes"]) limits.nodes = int(options["Search Nodes"]);
+    if (options["Search Depth"]) limits.depth = int(options["Search Depth"]);
+    //SFnps End
+
     if (rootMoves.empty())
     {
         main_manager()->updates.onUpdateNoMoves(
@@ -680,6 +685,13 @@ void Search::Worker::do_move(Position&    pos,
     }
 
     ++nodes;
+
+    // SFnps Begin
+    if (limits.nodes > 0 && limits.nodes <= 250 && threads.nodes_searched() >= limits.nodes)
+    {
+        threads.stop = true;
+    }
+    // SFnps End
 
     Dirties& dirties = accumulatorStack.push(pos);
     pos.do_move(move, st, givesCheck, dirties, &sharedHistory);

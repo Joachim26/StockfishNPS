@@ -1,4 +1,4 @@
-/*
+/* 
   Stockfish, a UCI chess playing engine derived from Glaurung 2.1
   Copyright (C) 2004-2026 The Stockfish developers (see AUTHORS file)
 
@@ -30,12 +30,17 @@
 #include "misc.h"
 #include "nnue/network.h"
 #include "nnue/nnue_misc.h"
+#include <random>
+#include <chrono>
 #include "position.h"
 #include "types.h"
 #include "uci.h"
 #include "nnue/nnue_accumulator.h"
 
 namespace Stockfish {
+
+int Eval::NNUE::RandomEval = 0;
+int Eval::NNUE::WaitMs = 0;
 
 static int simple_eval(const Position& pos) {
     const Color c = pos.side_to_move();
@@ -78,7 +83,22 @@ Value scale_evaluation(Value nnue, int optimism, const Position& pos) {
     // Damp down the evaluation linearly when shuffling
     v -= v * pos.rule50_count() / 189;
 
-    // Guarantee that the evaluation does not hit the tablebase range
+    // SFnps Begin //
+    if((Eval::NNUE::RandomEval) || (Eval::NNUE::WaitMs))
+    {
+      // waitms millisecs
+      std::this_thread::sleep_for(std::chrono::milliseconds(Eval::NNUE::WaitMs));
+
+      // RandomEval
+      static thread_local std::mt19937_64 rng = [](){return std::mt19937_64(std::time(0));}();
+      std::normal_distribution<float> d(0.0, PawnValue);
+      float r = d(rng);
+      r = std::clamp<float>(r, VALUE_TB_LOSS_IN_MAX_PLY + 1, VALUE_TB_WIN_IN_MAX_PLY - 1);
+      v = (Eval::NNUE::RandomEval * Value(r) + (100 - Eval::NNUE::RandomEval) * v) / 100;
+    }
+    // SFnps End //
+
+    // Guarantee evaluation does not hit the tablebase range
     v = std::clamp(v, VALUE_TB_LOSS_IN_MAX_PLY + 1, VALUE_TB_WIN_IN_MAX_PLY - 1);
 
     return v;

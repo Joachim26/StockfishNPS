@@ -140,11 +140,13 @@ class Logger {
 //      Stockfish version
 std::string engine_version_info() {
     std::stringstream ss;
-    ss << "Stockfish " << version << std::setfill('0');
+
+    if constexpr (version != "dev")  
+        ss << "SFnps" << version << std::setfill('0');
 
     if constexpr (version == "dev")
     {
-        ss << "-";
+        ss << "SFnps" << std::setfill('0');
 #ifdef GIT_DATE
         ss << stringify(GIT_DATE);
 #else
