@@ -35,6 +35,7 @@ jobs:
         with:
           msystem: ${{ matrix.config.msys_sys }}
           install: mingw-w64-${{ matrix.config.msys_env }} make git
+          suppress-deprecation-warnings: msystem-mingw64
 
       - name: Download both networks from the fishtest framework
         run: |
