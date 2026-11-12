@@ -96,14 +96,12 @@ void prefetch(const void*) {}
 
 constexpr int get_intel_hint(PrefetchRw rw, PrefetchLoc loc) {
     if (rw == PrefetchRw::WRITE)
-    {
     #ifdef _MM_HINT_ET0
         return _MM_HINT_ET0;
     #else
         // Fallback when write-prefetch hint is not available: use T0
         return _MM_HINT_T0;
     #endif
-    }
     switch (loc)
     {
     case PrefetchLoc::NONE :
@@ -167,7 +165,7 @@ inline std::vector<std::string_view> split(std::string_view s, std::string_view 
     for (;;)
     {
         const usize end = s.find(delimiter, begin);
-        if (end == std::string::npos)
+        if (end == std::string_view::npos)
             break;
 
         res.emplace_back(s.substr(begin, end - begin));
@@ -317,12 +315,10 @@ class MultiArray {
         static_assert(Detail::is_strictly_assignable_v<T, U>,
                       "Cannot assign fill value to entry type");
         for (auto& ele : data_)
-        {
             if constexpr (sizeof...(Sizes) == 0)
                 ele = v;
             else
                 ele.fill(v);
-        }
     }
 
     constexpr void swap(MultiArray<T, Size, Sizes...>& other) noexcept { data_.swap(other.data_); }
@@ -350,10 +346,7 @@ class RelaxedAtomic {
         inner(static_cast<T>(a)) {}
 
     T operator=(T val) {
-        if constexpr (UseAtomic)
-            inner.store(val, std::memory_order_relaxed);
-        else
-            inner = val;
+        this->store(val, std::memory_order_relaxed);
         return val;
     }
 
@@ -362,30 +355,16 @@ class RelaxedAtomic {
         return *this;
     }
 
-    operator T() const {
-        if constexpr (UseAtomic)
-            return inner.load(std::memory_order_relaxed);
-        else
-            return inner;
-    }
+    operator T() const { return this->load(std::memory_order_relaxed); }
 
     RelaxedAtomic& operator+=(T val) {
-        T res = this->load(std::memory_order_relaxed) + val;
-        this->store(res, std::memory_order_relaxed);
+        this->store(this->load(std::memory_order_relaxed) + val, std::memory_order_relaxed);
         return *this;
     }
 
-    RelaxedAtomic& operator++() {
-        T res = this->load(std::memory_order_relaxed) + 1;
-        this->store(res, std::memory_order_relaxed);
-        return *this;
-    }
+    RelaxedAtomic& operator++() { return *this += 1; }
 
-    RelaxedAtomic& operator--() {
-        T res = this->load(std::memory_order_relaxed) - 1;
-        this->store(res, std::memory_order_relaxed);
-        return *this;
-    }
+    RelaxedAtomic& operator--() { return *this -= 1; }
 
     T operator++(int) {
         T val = this->load(std::memory_order_relaxed);
@@ -400,8 +379,7 @@ class RelaxedAtomic {
     }
 
     RelaxedAtomic& operator-=(T val) {
-        T res = this->load(std::memory_order_relaxed) - val;
-        this->store(res, std::memory_order_relaxed);
+        this->store(this->load(std::memory_order_relaxed) - val, std::memory_order_relaxed);
         return *this;
     }
 
@@ -493,7 +471,7 @@ u64 hash_bytes(const char*, usize);
 template<typename T>
 inline usize get_raw_data_hash(const T& value) {
     // We must have no padding bytes because we're reinterpreting as char
-    static_assert(std::has_unique_object_representations<T>());
+    static_assert(std::has_unique_object_representations_v<T>);
 
     return static_cast<usize>(hash_bytes(reinterpret_cast<const char*>(&value), sizeof(value)));
 }
@@ -503,7 +481,7 @@ inline void hash_combine(usize& seed, const T& v) {
     usize x;
     // For primitive types we avoid using the default hasher, which may be
     // nondeterministic across program invocations
-    if constexpr (std::is_integral<T>())
+    if constexpr (std::is_integral_v<T>)
         x = v;
     else
         x = std::hash<T>{}(v);
@@ -591,6 +569,14 @@ void move_to_front(std::vector<T>& vec, Predicate pred) {
     #define RESTRICT __restrict
 #else
     #define RESTRICT
+#endif
+
+#ifdef __clang__
+    #define UNROLLED_FOR(...) _Pragma("clang loop unroll(full)") for (__VA_ARGS__)
+#elif defined(__GNUC__)
+    #define UNROLLED_FOR(...) _Pragma("GCC unroll 32") for (__VA_ARGS__)
+#else
+    #define UNROLLED_FOR(...) for (__VA_ARGS__)
 #endif
 
 void set_console_utf8();
