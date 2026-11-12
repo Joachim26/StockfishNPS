@@ -1,0 +1,38 @@
+name: SFNNv6_avx2_clang64_Upload
+on:
+  workflow_dispatch:
+jobs:
+  SFnpsClang64WinBuilds:
+    name: Windows 2022 Clang64 x86_64
+    runs-on: windows-2022
+    defaults:
+      run:
+        working-directory: src
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Setup msys and install required packages
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: clang64
+          install: mingw-w64-clang-x86_64-clang make git
+
+      - name: Download both networks from the fishtest framework
+        run: |
+          make net
+
+      - name: win11 clang64 pgo build
+        run: |
+          make clean
+          make -j3 profile-build ARCH=x86-64-avx2 COMP=clang COMPCXX=clang++
+          make strip ARCH=x86-64-avx2 COMP=clang COMPCXX=clang++
+          cp stockfish.exe ../SFnps_avx2_clang64.exe
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: SFnps_avx2_clang64
+          path: SFnps_avx2_clang64.exe
+
