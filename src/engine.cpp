@@ -106,7 +106,9 @@ Engine::Engine(std::optional<std::filesystem::path> path) :
       }));
         
     options.add("Search Nodes", Option(0, 0, 1000000));
-        
+
+    options.add("Endgame Nodes Boost", Option(0, 0, 100));
+
     options.add("Search Depth", Option(0, 0, 20));
       
       

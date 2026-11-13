@@ -219,6 +219,21 @@ void Search::Worker::start_searching() {
     //SFnps Begin
     if (options["Search Nodes"]) limits.nodes = int(options["Search Nodes"]);
     if (options["Search Depth"]) limits.depth = int(options["Search Depth"]);
+
+    constexpr int    EndgamePieceThreshold = 16;
+    constexpr double EndgameBoostScale     = 1.0;
+
+    const int endgameBoost = int(options["Endgame Nodes Boost"]);
+    if (endgameBoost > 0 && limits.nodes > 0)
+    {
+        const int pieces = std::max(2, rootPos.count<ALL_PIECES>());
+        if (pieces < EndgamePieceThreshold)
+        {
+            const double factor =
+              1.0 + (endgameBoost / 100.0) * EndgameBoostScale * (double(EndgamePieceThreshold) / pieces - 1.0);
+            limits.nodes = std::max<u64>(limits.nodes, u64(std::llround(limits.nodes * factor)));
+        }
+    }
     //SFnps End
 
     if (rootMoves.empty())
@@ -687,7 +702,7 @@ void Search::Worker::do_move(Position&    pos,
     ++nodes;
 
     // SFnps Begin
-    if (limits.nodes > 0 && limits.nodes <= 250 && threads.nodes_searched() >= limits.nodes)
+    if (limits.nodes > 0 && limits.nodes <= 5000 && threads.nodes_searched() >= limits.nodes)
     {
         threads.stop = true;
     }
